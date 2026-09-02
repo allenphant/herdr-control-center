@@ -4,6 +4,16 @@
 
 ---
 
+## 🎬 實機操作示範影片 (Demo Video)
+
+> 🎥 **實機操作演示影片即將推出（Coming Soon）**  
+> 本區塊將展示：從手機 4G 解鎖 ➔ 打開 Termius ➔ 一鍵 F9 Zoom ➔ 中文語音對話 Claude Code 的完整極速操作。
+> 
+> <!-- 影片發布後，請將下方連結與圖片替換為您的 YouTube 封面或展示影片網址 -->
+> [![Demo Video](https://img.shields.io/badge/YouTube-實機操作示範影片_(即將推出)-red?style=for-the-badge&logo=youtube)](#)
+
+---
+
 ## 📑 目錄
 1. [系統架構概觀](#1-系統架構概觀)
 2. [先決條件與必備軟體](#2-先決條件與必備軟體)
