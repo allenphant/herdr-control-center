@@ -23,8 +23,8 @@ The web console does not route by agent name alone. Every delivery is bound to t
 ## Start Pane Relay
 
 ```bash
-git clone https://github.com/allenphant/herdr-mobile-guide.git
-cd herdr-mobile-guide
+git clone https://github.com/allenphant/herdr-control-center.git
+cd herdr-control-center
 npm start
 ```
 
