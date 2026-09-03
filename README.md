@@ -42,6 +42,7 @@ The installer creates and enables `pane-relay.service`, then adds a **Pane Relay
 
 - [Pane Relay setup, delivery guarantees, and development](docs/pane-relay.md)
 - [Mobile and cross-device Herdr access](docs/mobile-access.md)
+- [Agent-to-agent communication exploration](docs/agent-communication.md)
 - [Sample Herdr configuration](config.toml.example)
 
 ## Security model

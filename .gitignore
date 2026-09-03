@@ -1,4 +1,5 @@
 data/
+.herdr-control-center/
 node_modules/
 npm-debug.log*
 *.local
