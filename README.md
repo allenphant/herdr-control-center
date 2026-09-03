@@ -38,11 +38,22 @@ bash scripts/install-user-service.sh
 
 The installer creates and enables `pane-relay.service`, then adds a **Pane Relay** launcher to the desktop and application menu.
 
+## Demo
+
+<p align="center">
+  <img src="docs/demo/pane-relay-desktop.png" alt="Pane Relay desktop control center" width="1200" />
+</p>
+
+<p align="center">
+  <img src="docs/demo/herdr-mobile.jpg" alt="Herdr mobile workflow" width="420" />
+</p>
+
 ## Documentation
 
 - [Pane Relay setup, delivery guarantees, and development](docs/pane-relay.md)
 - [Mobile and cross-device Herdr access](docs/mobile-access.md)
 - [Agent-to-agent communication exploration](docs/agent-communication.md)
+- [Cross-session data relay backlog proposal](docs/cross-session-data-relay-backlog.md)
 - [Sample Herdr configuration](config.toml.example)
 
 ## Security model

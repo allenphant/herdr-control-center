@@ -45,6 +45,7 @@ const ui = {
   toastRegion: document.querySelector("#toast-region"),
   toggleAllWorkspaces: document.querySelector("#toggle-all-workspaces"),
   queueSummary: document.querySelector("#queue-summary"),
+  quotaBackdrop: document.querySelector("#quota-backdrop"),
   quotaGrid: document.querySelector("#quota-grid"),
   quotaFloat: document.querySelector("#quota-float"),
   quotaOrb: document.querySelector("#quota-orb"),
@@ -1847,10 +1848,34 @@ function cycleTheme() {
   updateThemeLabel(next);
 }
 
+function placePaneSearchPopover() {
+  if (ui.paneSearchPopover.hidden) return;
+  const margin = 12;
+  const gap = 8;
+  const trigger = ui.togglePaneSearch.getBoundingClientRect();
+  const popover = ui.paneSearchPopover.getBoundingClientRect();
+  const left = Math.max(
+    margin,
+    Math.min(window.innerWidth - popover.width - margin, trigger.right - popover.width),
+  );
+  const below = trigger.bottom + gap;
+  const above = trigger.top - popover.height - gap;
+  const top = below + popover.height <= window.innerHeight - margin
+    ? below
+    : Math.max(margin, above);
+  ui.paneSearchPopover.style.left = `${left}px`;
+  ui.paneSearchPopover.style.top = `${top}px`;
+}
+
 function setPaneSearchOpen(open) {
   ui.paneSearchPopover.hidden = !open;
   ui.togglePaneSearch.setAttribute("aria-expanded", String(open));
-  if (open) queueMicrotask(() => ui.paneFilter.focus());
+  if (open) {
+    queueMicrotask(() => {
+      placePaneSearchPopover();
+      ui.paneFilter.focus();
+    });
+  }
 }
 
 function quotaPosition() {
@@ -1875,7 +1900,9 @@ function placeQuotaFloat(x, y, { save = false } = {}) {
 
 function setQuotaOpen(open) {
   ui.quotaPanel.hidden = !open;
+  ui.quotaBackdrop.hidden = !open;
   ui.quotaOrb.setAttribute("aria-expanded", String(open));
+  document.body.classList.toggle("quota-is-open", open);
   localStorage.setItem("pane-relay-quota-open", String(open));
 }
 
@@ -1920,6 +1947,7 @@ function initializeQuotaFloat() {
   window.addEventListener("resize", () => {
     const rect = ui.quotaFloat.getBoundingClientRect();
     placeQuotaFloat(rect.left, rect.top);
+    placePaneSearchPopover();
   });
 }
 
@@ -2001,6 +2029,10 @@ ui.closeQuota.addEventListener("click", () => {
   setQuotaOpen(false);
   ui.quotaOrb.focus();
 });
+ui.quotaBackdrop.addEventListener("click", () => {
+  setQuotaOpen(false);
+  ui.quotaOrb.focus();
+});
 ui.themeToggle.addEventListener("click", cycleTheme);
 ui.closeJobDialog.addEventListener("click", () => ui.jobDialog.close());
 ui.jobDialog.addEventListener("click", (event) => {
@@ -2014,6 +2046,12 @@ document.addEventListener("pointerdown", (event) => {
   if (ui.paneSearchPopover.hidden) return;
   if (event.target.closest(".pane-search-control")) return;
   setPaneSearchOpen(false);
+});
+window.addEventListener("scroll", placePaneSearchPopover, true);
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || ui.quotaPanel.hidden) return;
+  setQuotaOpen(false);
+  ui.quotaOrb.focus();
 });
 document.querySelectorAll("[data-offset-minutes]").forEach((button) => {
   button.addEventListener("click", () => setDateOffset(Number(button.dataset.offsetMinutes)));

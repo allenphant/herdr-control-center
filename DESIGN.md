@@ -19,6 +19,10 @@ colors:
   on-action: "#f4fbf8"
   warning: "#9a541f"
   warning-soft: "#f4e4d6"
+  quota-surface: "#fff1e3"
+  quota-raised: "#fff9f2"
+  quota-accent: "#bd5f18"
+  quota-ink: "#3d2415"
   danger: "#963b35"
   danger-soft: "#f4ddda"
   success: "#246547"
@@ -40,6 +44,10 @@ colors:
   night-action-green-hover: "#2f7e73"
   night-warning: "#e6a56f"
   night-warning-soft: "#493526"
+  night-quota-surface: "#302117"
+  night-quota-raised: "#3c291d"
+  night-quota-accent: "#f0a061"
+  night-quota-ink: "#fff4e8"
   night-danger: "#ef9a91"
   night-danger-soft: "#4a2927"
   night-success: "#8bc9a5"
@@ -254,6 +262,7 @@ Components are restrained, explicit, and operational. Every interactive state re
 - **Pane routes:** Borderless at rest, a subtle rule and muted fill on hover, and Routing Mist plus a deep green rail when selected.
 - **Verified target summary:** Raised Ledger fill, a standard rule, a 14px corner, and a four-pixel routing rail that binds the visible identity grid to the composer.
 - **Queue records:** Raised Ledger fill, a one-pixel rule, a 13px corner, and 14px internal padding. No resting shadow.
+- **Quota overlay:** A dedicated warm ochre surface distinguishes account limits from the routing ledger. A dark translucent backdrop blurs the working surface while the panel is open; the draggable quota orb uses the same orange accent in both themes.
 - **Policy options:** Raised Ledger fill and a one-pixel rule; the checked option shifts to Routing Mist and a mixed green border.
 
 ### Inputs / Fields

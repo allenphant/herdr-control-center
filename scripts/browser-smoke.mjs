@@ -142,6 +142,36 @@ try {
   await find("[data-quota-provider='claude'] .quota-window");
   await find("[data-quota-provider='agy'] .quota-group");
   await find("progress.quota-track[value][max='100']");
+  const quotaOverlay = await webdriver(`/session/${sessionId}/execute/sync`, {
+    method: "POST",
+    body: {
+      script: `
+        const panel = document.querySelector('#quota-panel');
+        const backdrop = document.querySelector('#quota-backdrop');
+        const body = getComputedStyle(document.body);
+        const panelStyle = getComputedStyle(panel);
+        const backdropStyle = getComputedStyle(backdrop);
+        const rect = panel.getBoundingClientRect();
+        return {
+          backdropVisible: !backdrop.hidden && backdropStyle.display !== 'none',
+          backdropFilter: backdropStyle.backdropFilter || backdropStyle.webkitBackdropFilter,
+          panelBackground: panelStyle.backgroundColor,
+          bodyBackground: body.backgroundColor,
+          withinViewport: rect.left >= 0 && rect.top >= 0
+            && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight,
+        };
+      `,
+      args: [],
+    },
+  });
+  if (
+    !quotaOverlay.backdropVisible
+    || !quotaOverlay.backdropFilter.includes("blur")
+    || quotaOverlay.panelBackground === quotaOverlay.bodyBackground
+    || !quotaOverlay.withinViewport
+  ) {
+    throw new Error(`Quota overlay treatment is incomplete: ${JSON.stringify(quotaOverlay)}`);
+  }
   const quotaBars = await webdriver(`/session/${sessionId}/execute/sync`, {
     method: "POST",
     body: {
@@ -169,6 +199,31 @@ try {
   const searchToggle = await find("#toggle-pane-search");
   await webdriver(`/session/${sessionId}/element/${searchToggle}/click`, { method: "POST", body: {} });
   await find("#pane-search-popover:not([hidden]) #pane-filter");
+  const searchBounds = await webdriver(`/session/${sessionId}/execute/sync`, {
+    method: "POST",
+    body: {
+      script: `
+        const rect = document.querySelector('#pane-search-popover').getBoundingClientRect();
+        return {
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+        };
+      `,
+      args: [],
+    },
+  });
+  if (
+    searchBounds.left < 0
+    || searchBounds.top < 0
+    || searchBounds.right > searchBounds.viewportWidth
+    || searchBounds.bottom > searchBounds.viewportHeight
+  ) {
+    throw new Error(`Pane search escaped the viewport: ${JSON.stringify(searchBounds)}`);
+  }
   await webdriver(`/session/${sessionId}/element/${searchToggle}/click`, { method: "POST", body: {} });
 
   let pane;

@@ -21,6 +21,17 @@
   --success: #246547;
   --success-soft: #dcebe1;
   --focus: #167f74;
+  --quota-surface: #fff1e3;
+  --quota-raised: #fff9f2;
+  --quota-muted: #f6dcc4;
+  --quota-ink: #3d2415;
+  --quota-ink-soft: #70482e;
+  --quota-ink-faint: #825c40;
+  --quota-line: #e4b789;
+  --quota-line-strong: #c97b3b;
+  --quota-accent: #bd5f18;
+  --quota-accent-hover: #9f4a0d;
+  --quota-accent-soft: #f7d7bb;
   --shadow: 0 20px 60px rgb(31 45 40 / 0.09);
   --radius-panel: 16px;
   --radius-control: 10px;
@@ -53,6 +64,17 @@ html[data-theme="dark"] {
   --success: #8bc9a5;
   --success-soft: #254134;
   --focus: #89d8cb;
+  --quota-surface: #302117;
+  --quota-raised: #3c291d;
+  --quota-muted: #4a3121;
+  --quota-ink: #fff4e8;
+  --quota-ink-soft: #e9c6a8;
+  --quota-ink-faint: #c9966c;
+  --quota-line: #6b472f;
+  --quota-line-strong: #a96a3a;
+  --quota-accent: #f0a061;
+  --quota-accent-hover: #ffb276;
+  --quota-accent-soft: #56351f;
   --shadow: 0 24px 72px rgb(0 0 0 / 0.28);
 }
 
@@ -80,6 +102,17 @@ html[data-theme="dark"] {
     --success: #8bc9a5;
     --success-soft: #254134;
     --focus: #89d8cb;
+    --quota-surface: #302117;
+    --quota-raised: #3c291d;
+    --quota-muted: #4a3121;
+    --quota-ink: #fff4e8;
+    --quota-ink-soft: #e9c6a8;
+    --quota-ink-faint: #c9966c;
+    --quota-line: #6b472f;
+    --quota-line-strong: #a96a3a;
+    --quota-accent: #f0a061;
+    --quota-accent-hover: #ffb276;
+    --quota-accent-soft: #56351f;
     --shadow: 0 24px 72px rgb(0 0 0 / 0.28);
   }
 }
@@ -107,6 +140,10 @@ body {
     var(--bg);
   font-size: 15px;
   line-height: 1.5;
+}
+
+body.quota-is-open {
+  overflow: hidden;
 }
 
 button,
@@ -318,7 +355,18 @@ h2 {
   z-index: 42;
 }
 
+.quota-backdrop {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  background: color-mix(in srgb, #1b0e06 38%, transparent);
+  backdrop-filter: blur(10px) saturate(0.72);
+  -webkit-backdrop-filter: blur(10px) saturate(0.72);
+}
+
 .quota-orb {
+  position: relative;
+  z-index: 2;
   display: grid;
   width: 56px;
   height: 56px;
@@ -326,13 +374,17 @@ h2 {
   gap: 1px;
   padding: 7px;
   touch-action: none;
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--quota-accent) 72%, white);
   border-radius: 50%;
-  color: var(--on-action);
-  background: var(--button-primary-bg);
-  box-shadow: 0 10px 28px color-mix(in srgb, var(--accent) 28%, transparent);
+  color: #fffaf4;
+  background: var(--quota-accent);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--quota-accent) 38%, transparent);
   cursor: grab;
   user-select: none;
+}
+
+.quota-orb:hover {
+  background: var(--quota-accent-hover);
 }
 
 .quota-orb:active {
@@ -356,6 +408,7 @@ h2 {
 
 .quota-dashboard {
   position: fixed;
+  z-index: 1;
   top: 50%;
   left: 50%;
   display: block;
@@ -363,11 +416,23 @@ h2 {
   max-height: calc(100dvh - 24px);
   margin: 0;
   overflow: auto;
-  border: 1px solid var(--line);
+  --surface: var(--quota-surface);
+  --surface-raised: var(--quota-raised);
+  --surface-muted: var(--quota-muted);
+  --ink: var(--quota-ink);
+  --ink-soft: var(--quota-ink-soft);
+  --ink-faint: var(--quota-ink-faint);
+  --line: var(--quota-line);
+  --line-strong: var(--quota-line-strong);
+  --accent: var(--quota-accent);
+  --accent-hover: var(--quota-accent-hover);
+  --accent-soft: var(--quota-accent-soft);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-panel);
   background: var(--surface);
   scroll-margin-top: calc(var(--topbar-height) + 12px);
-  box-shadow: 0 22px 64px rgb(15 24 20 / 0.24);
+  color: var(--ink);
+  box-shadow: 0 24px 72px rgb(24 12 4 / 0.42);
   overscroll-behavior: contain;
   transform: translate(-50%, -50%);
 }
@@ -698,16 +763,18 @@ h2 {
 }
 
 .pane-search-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
+  position: fixed;
+  top: 0;
+  left: 0;
   z-index: 12;
   display: grid;
-  width: min(340px, calc(100vw - 48px));
+  width: min(340px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
   gap: 6px;
   padding: 12px;
+  overflow: auto;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-summary);
+  border-radius: var(--radius-control);
   color: var(--ink-soft);
   background: var(--surface-raised);
   box-shadow: var(--shadow);
@@ -2482,9 +2549,14 @@ dialog::backdrop {
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .topbar {
+  .topbar,
+  .quota-backdrop {
     background: var(--bg);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+
+  .quota-backdrop {
+    background: rgb(8 12 10 / 0.78);
   }
 }
