@@ -77,8 +77,9 @@ systemctl --user status pane-relay
 
 - `Agent 就緒後傳送` waits until Herdr reports `idle` or `done`, retrying until the configured deadline.
 - `準時送出` attempts delivery at the selected time after fingerprint verification, regardless of the current agent state.
-- Delivery always uses `herdr --session <name> agent prompt <pane-id> <message>`.
-- Raw pane input and shell execution are never used.
+- Delivery uses `herdr --session <name> agent prompt <pane-id> <message> --wait` and is marked sent only after Herdr reports an observed agent lifecycle transition.
+- Claude Code may finish converting a pasted local image path into an attachment chip after the prompt's encoded Enter has already arrived. Only when Herdr returns the structured `agent_prompt_stalled` error for a job with attachments, Pane Relay revalidates the conversation fingerprint and unchanged `state_change_seq`, sends one logical Enter through `herdr agent send-keys`, and then requires a lifecycle transition before recording success.
+- Raw pane input and shell execution are never used; the image fallback remains on Herdr's agent surface.
 - The browser submits the fingerprint captured at pane selection. The server returns HTTP 409 if the pane occupant changes before the schedule is created.
 - A missing pane, replaced agent, changed conversation fingerprint, or ambiguous session-repair candidate fails closed.
 - Active queue messages can be edited under the same per-job lock used by delivery and cancellation.

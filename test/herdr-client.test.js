@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   HerdrClient,
   fingerprintFromAgent,
   fingerprintsEqual,
 } from "../src/herdr-client.js";
+
+const stalledPromptFixture = await readFile(
+  new URL("fixtures/herdr-agent-prompt-stalled.json", import.meta.url),
+  "utf8",
+);
+// Captured from a real Herdr 0.8.0 agent.prompt --wait call on 2026-09-03.
 
 test("fingerprintFromAgent extracts the stable Herdr conversation identity", () => {
   const fingerprint = fingerprintFromAgent({
@@ -53,9 +60,162 @@ test("sendPrompt targets the explicit Herdr session and pane without a shell", a
         "prompt",
         "w2:pM",
         "繼續原本工作",
+        "--wait",
+        "--until",
+        "working",
+        "--until",
+        "blocked",
+        "--until",
+        "done",
+        "--until",
+        "idle",
+        "--timeout",
+        "10000",
       ],
     },
   ]);
+});
+
+test("sendPrompt recovers a stalled image draft with one verified Enter", async () => {
+  const calls = [];
+  const fingerprint = {
+    agent: "claude",
+    kind: "id",
+    source: "herdr:claude",
+    value: "conversation-456",
+  };
+  let getCount = 0;
+  const runner = async (binary, args) => {
+    calls.push({ binary, args });
+    const command = args.slice(2);
+    if (command[0] === "agent" && command[1] === "prompt") {
+      const error = new Error("prompt stalled");
+      error.code = 1;
+      error.stderr = stalledPromptFixture;
+      throw error;
+    }
+    if (command[0] === "agent" && command[1] === "get") {
+      getCount += 1;
+      const stateChangeSeq = getCount === 1 ? 42 : 43;
+      return {
+        stdout: JSON.stringify({
+          result: {
+            agent: {
+              agent: "claude",
+              agent_status: getCount === 1 ? "done" : "working",
+              agent_session: fingerprint,
+              state_change_seq: stateChangeSeq,
+            },
+          },
+        }),
+        stderr: "",
+      };
+    }
+    if (command.join(" ") === "agent send-keys w2:pM enter") {
+      return {
+        stdout: JSON.stringify({ result: { type: "ok" } }),
+        stderr: "",
+      };
+    }
+    throw new Error(`Unexpected command: ${command.join(" ")}`);
+  };
+  const client = new HerdrClient({ binary: "/opt/herdr", runner });
+
+  const result = await client.sendPrompt(
+    "project-a",
+    "w2:pM",
+    "請檢視 /private/image.png",
+    {
+      expectedFingerprint: fingerprint,
+      baselineStateChangeSeq: 42,
+      retryEnterOnStall: true,
+    },
+  );
+
+  assert.equal(result.result.recoveredWithEnter, true);
+  assert.equal(result.result.agent.state_change_seq, 43);
+  assert.deepEqual(calls.map(({ args }) => args.slice(2, 5)), [
+    ["agent", "prompt", "w2:pM"],
+    ["agent", "get", "w2:pM"],
+    ["agent", "send-keys", "w2:pM"],
+    ["agent", "get", "w2:pM"],
+  ]);
+});
+
+test("sendPrompt never applies the Enter fallback to a text-only stall", async () => {
+  const calls = [];
+  const runner = async (_binary, args) => {
+    calls.push(args);
+    const error = new Error("prompt stalled");
+    error.code = 1;
+    error.stderr = stalledPromptFixture;
+    throw error;
+  };
+  const client = new HerdrClient({ binary: "/opt/herdr", runner });
+
+  await assert.rejects(
+    client.sendPrompt("project-a", "w2:pM", "純文字訊息"),
+    /agent_prompt_stalled/,
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][3], "prompt");
+});
+
+test("sendPrompt refuses Enter when the stalled pane changed conversation", async () => {
+  const originalFingerprint = {
+    agent: "claude",
+    kind: "id",
+    source: "herdr:claude",
+    value: "conversation-original",
+  };
+  const replacementFingerprint = {
+    ...originalFingerprint,
+    value: "conversation-replacement",
+  };
+  const calls = [];
+  const runner = async (_binary, args) => {
+    calls.push(args);
+    const command = args.slice(2);
+    if (command[1] === "prompt") {
+      const error = new Error("prompt stalled");
+      error.code = 1;
+      error.stderr = stalledPromptFixture;
+      throw error;
+    }
+    if (command[1] === "get") {
+      return {
+        stdout: JSON.stringify({
+          result: {
+            agent: {
+              agent: "claude",
+              agent_status: "done",
+              agent_session: replacementFingerprint,
+              state_change_seq: 42,
+            },
+          },
+        }),
+        stderr: "",
+      };
+    }
+    throw new Error(`Unexpected command: ${command.join(" ")}`);
+  };
+  const client = new HerdrClient({ binary: "/opt/herdr", runner });
+
+  await assert.rejects(
+    client.sendPrompt(
+      "project-a",
+      "w2:pM",
+      "請檢視 /private/image.png",
+      {
+        expectedFingerprint: originalFingerprint,
+        baselineStateChangeSeq: 42,
+        retryEnterOnStall: true,
+      },
+    ),
+    /agent session 已變更/,
+  );
+  assert.equal(calls.length, 2);
+  assert.equal(calls.some((args) => args.includes("send-keys")), false);
 });
 
 test("readPane returns text from the explicit Herdr session and pane", async () => {

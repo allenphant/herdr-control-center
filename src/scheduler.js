@@ -139,7 +139,17 @@ export class Scheduler {
         return persisted || null;
       }
 
-      await this.client.sendPrompt(job.sessionName, job.paneId, promptForJob(job));
+      const attachments = Array.isArray(job.attachments) ? job.attachments : [];
+      await this.client.sendPrompt(
+        job.sessionName,
+        job.paneId,
+        promptForJob(job),
+        {
+          expectedFingerprint: job.expectedFingerprint,
+          baselineStateChangeSeq: agent.state_change_seq,
+          retryEnterOnStall: attachments.length > 0,
+        },
+      );
       const sentAt = this.clock().toISOString();
       const following = nextOccurrence(job.scheduledFor, job.recurrence);
       const patch = following

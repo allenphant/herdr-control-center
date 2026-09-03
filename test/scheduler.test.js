@@ -95,12 +95,19 @@ test("dispatch appends local image paths to the prompt", async () => {
       }],
     }));
     let sentMessage = "";
+    let sendOptions;
     const client = {
       async getAgent() {
-        return { agent: "codex", agent_status: "idle", agent_session: fingerprint };
+        return {
+          agent: "codex",
+          agent_status: "idle",
+          agent_session: fingerprint,
+          state_change_seq: 42,
+        };
       },
-      async sendPrompt(_sessionName, _paneId, message) {
+      async sendPrompt(_sessionName, _paneId, message, options) {
         sentMessage = message;
+        sendOptions = options;
       },
     };
     const scheduler = new Scheduler({
@@ -114,6 +121,11 @@ test("dispatch appends local image paths to the prompt", async () => {
     assert.match(sentMessage, /請繼續原本工作/);
     assert.match(sentMessage, /附加圖片/);
     assert.match(sentMessage, /\/private\/pane-relay\/image-1\.png/);
+    assert.deepEqual(sendOptions, {
+      expectedFingerprint: fingerprint,
+      baselineStateChangeSeq: 42,
+      retryEnterOnStall: true,
+    });
   });
 });
 

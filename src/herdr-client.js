@@ -2,6 +2,27 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const PROMPT_START_TIMEOUT_MS = 10_000;
+const PROMPT_TRANSITION_TIMEOUT_MS = 5_000;
+const PROMPT_TRANSITION_POLL_MS = 100;
+const ENTER_FALLBACK_STATES = new Set(["idle", "done"]);
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function herdrErrorCode(error) {
+  for (const raw of [error?.details?.stderr, error?.message]) {
+    if (!raw) continue;
+    try {
+      const payload = JSON.parse(raw);
+      if (payload?.error?.code) return payload.error.code;
+    } catch {
+      // Herdr may also return a plain-text CLI error.
+    }
+  }
+  return null;
+}
 
 export class HerdrCommandError extends Error {
   constructor(message, details = {}) {
@@ -187,9 +208,92 @@ export class HerdrClient {
     );
   }
 
-  async sendPrompt(sessionName, paneId, message) {
-    return this.run(
-      this.withSession(sessionName, ["agent", "prompt", paneId, message]),
+  async sendPrompt(sessionName, paneId, message, {
+    expectedFingerprint = null,
+    baselineStateChangeSeq = null,
+    retryEnterOnStall = false,
+  } = {}) {
+    try {
+      return await this.run(
+        this.withSession(sessionName, [
+          "agent",
+          "prompt",
+          paneId,
+          message,
+          "--wait",
+          "--until",
+          "working",
+          "--until",
+          "blocked",
+          "--until",
+          "done",
+          "--until",
+          "idle",
+          "--timeout",
+          String(PROMPT_START_TIMEOUT_MS),
+        ]),
+      );
+    } catch (error) {
+      if (!retryEnterOnStall || herdrErrorCode(error) !== "agent_prompt_stalled") {
+        throw error;
+      }
+    }
+
+    const stalledAgent = await this.getAgent(sessionName, paneId);
+    const stalledFingerprint = fingerprintFromAgent(stalledAgent);
+    if (!fingerprintsEqual(expectedFingerprint, stalledFingerprint)) {
+      throw new HerdrCommandError(
+        "圖片提示停滯後 agent session 已變更，拒絕補送 Enter",
+        { expectedFingerprint, actualFingerprint: stalledFingerprint },
+      );
+    }
+    if (
+      !Number.isInteger(baselineStateChangeSeq)
+      || stalledAgent.state_change_seq !== baselineStateChangeSeq
+      || !ENTER_FALLBACK_STATES.has(stalledAgent.agent_status)
+    ) {
+      throw new HerdrCommandError(
+        "圖片提示停滯後 pane 狀態已變更，拒絕補送 Enter",
+        {
+          baselineStateChangeSeq,
+          actualStateChangeSeq: stalledAgent.state_change_seq,
+          agentStatus: stalledAgent.agent_status,
+        },
+      );
+    }
+
+    await this.run(
+      this.withSession(sessionName, ["agent", "send-keys", paneId, "enter"]),
+    );
+
+    const deadline = Date.now() + PROMPT_TRANSITION_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const agent = await this.getAgent(sessionName, paneId);
+      const actualFingerprint = fingerprintFromAgent(agent);
+      if (!fingerprintsEqual(expectedFingerprint, actualFingerprint)) {
+        throw new HerdrCommandError(
+          "補送 Enter 後 agent session 已變更，無法確認送達",
+          { expectedFingerprint, actualFingerprint },
+        );
+      }
+      if (
+        agent.state_change_seq > baselineStateChangeSeq
+        && agent.agent_status !== "unknown"
+      ) {
+        return {
+          result: {
+            type: "agent_prompted",
+            agent,
+            recoveredWithEnter: true,
+          },
+        };
+      }
+      await delay(PROMPT_TRANSITION_POLL_MS);
+    }
+
+    throw new HerdrCommandError(
+      "圖片提示補送 Enter 後未觀察到 agent lifecycle 變化",
+      { paneId, baselineStateChangeSeq },
     );
   }
 
