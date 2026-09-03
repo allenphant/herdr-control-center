@@ -1,0 +1,14 @@
+[Unit]
+Description=Pane Relay for Herdr
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@@PROJECT_DIR@@
+Environment=HERDR_BIN=@@HERDR_BIN@@
+ExecStart=@@NODE_BIN@@ @@PROJECT_DIR@@/src/server.js
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

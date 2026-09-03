@@ -1,0 +1,17 @@
+{
+  "name": "herdr-pane-scheduler",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pane-bound prompt scheduler for persistent Herdr sessions",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test",
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "check": "node --check src/herdr-client.js && node --check src/quota-provider.js && node --check src/store.js && node --check src/scheduler.js && node --check src/server.js && node --check public/app.js && node --check scripts/browser-smoke.mjs && node --check scripts/install-claude-quota-relay.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

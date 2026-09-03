@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="zh-Hant" data-theme="system">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#eff1ec" />
+    <title>Pane Relay</title>
+    <link rel="stylesheet" href="/styles.css?v=18" />
+    <script type="module" src="/app.js?v=18"></script>
+  </head>
+  <body>
+    <!--
+      THESIS: Pane Relay is a switchboard dispatch ledger for returning a message to one verified Herdr conversation. It refuses agent-name routing and decorative dashboard cards.
+      OWN-WORLD: Quiet mineral surfaces, deep green signal ink, squared routing rails, and tabular identifiers. State is expressed by text, shape, and restrained semantic color.
+      STORY: Select the exact pane, verify the conversation fingerprint, write the continuation, set the clock, and watch the dispatch record resolve.
+      FIRST VIEWPORT: Pane routes occupy the left rail, the schedule composer owns the center, and the live queue stays visible at right with the primary action at the composer's foot.
+      FORM: Switchboard dispatch ledger, grounded candidate 6, seed 77de93f9.
+      FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+    -->
+    <header class="topbar">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true">PR</span>
+        <div>
+          <h1>Pane Relay</h1>
+          <p>把訊息送回同一段 Herdr 對話</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <div class="service-state" id="service-state" role="status">
+          <span class="state-indicator" aria-hidden="true"></span>
+          <span>連線中</span>
+        </div>
+        <button class="button button-quiet" id="theme-toggle" type="button">主題：系統</button>
+      </div>
+    </header>
+
+    <div class="quota-float" id="quota-float">
+      <button class="quota-orb" id="quota-orb" type="button" aria-expanded="false" aria-controls="quota-panel" title="查看額度；拖曳可移動">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 19V9M10 19V5M16 19v-7M22 19V3" />
+        </svg>
+        <span class="quota-orb-label">額度</span>
+      </button>
+      <section class="quota-dashboard" id="quota-panel" aria-labelledby="quota-title" hidden>
+        <div class="quota-heading">
+          <div>
+            <h2 id="quota-title">Agent 額度</h2>
+            <p>拖曳浮球可自由移動</p>
+          </div>
+          <div class="quota-heading-actions">
+            <button class="button button-quiet" id="refresh-quota" type="button">更新</button>
+            <button class="icon-button" id="close-quota" type="button" aria-label="收合額度面板" title="收合額度面板">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+            </button>
+          </div>
+        </div>
+        <div class="quota-grid" id="quota-grid" aria-live="polite" aria-busy="true">
+          <div class="quota-loading">讀取額度與重置時間…</div>
+        </div>
+      </section>
+    </div>
+
+    <main class="app-shell">
+      <aside class="route-panel" aria-labelledby="route-title">
+        <div class="panel-heading">
+          <div>
+            <h2 id="route-title">選擇目標 pane</h2>
+            <p>像 Herdr 一樣，用末尾內容辨認工作</p>
+          </div>
+          <button class="button button-quiet" id="refresh-topology" type="button">重新整理</button>
+        </div>
+        <div class="route-toolbar">
+          <div class="route-legends" aria-label="Pane 標記說明">
+            <span class="preview-legend"><span class="preview-live-dot" aria-hidden="true"></span>即時內容</span>
+            <span class="preview-legend"><span class="focus-legend-mark" aria-hidden="true"></span>Herdr focus</span>
+          </div>
+          <div class="route-toolbar-actions">
+            <div class="pane-search-control">
+              <button class="icon-button route-search-toggle" id="toggle-pane-search" type="button" aria-expanded="false" aria-controls="pane-search-popover" aria-label="搜尋 pane" title="搜尋 pane">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+              </button>
+              <label class="pane-search-popover" id="pane-search-popover" hidden>
+                <span>搜尋 pane</span>
+                <input id="pane-filter" type="search" placeholder="標題、路徑或已載入內容" autocomplete="off" />
+              </label>
+            </div>
+            <button class="route-collapse-toggle" id="toggle-all-workspaces" type="button">全部收合</button>
+            <div class="route-view-toggle" role="group" aria-label="Pane 顯示方式">
+              <button type="button" data-route-view="space" aria-pressed="true">空間</button>
+              <button type="button" data-route-view="list" aria-pressed="false">清單</button>
+            </div>
+          </div>
+        </div>
+        <div class="agent-filters" role="group" aria-label="依 agent 篩選 pane">
+          <button type="button" data-agent-filter="all" aria-pressed="true">全部</button>
+          <button type="button" data-agent-filter="codex" aria-pressed="false">Codex</button>
+          <button type="button" data-agent-filter="claude" aria-pressed="false">Claude</button>
+          <button type="button" data-agent-filter="agy" aria-pressed="false">AGY</button>
+          <button type="button" data-agent-filter="shell" aria-pressed="false">Shell</button>
+        </div>
+        <div class="route-list" id="route-list"></div>
+      </aside>
+
+      <section class="composer-panel" aria-labelledby="composer-title">
+        <div class="panel-heading composer-heading">
+          <div>
+            <h2 id="composer-title">安排下一次接續</h2>
+            <p>排程建立時與送出前都會核對 agent session</p>
+          </div>
+          <span class="timezone-label" id="timezone-label"></span>
+        </div>
+
+        <div class="composer-scroll">
+          <div class="target-empty" id="target-empty">
+            <strong>先從左側選擇 pane</strong>
+            <p>只有具有可驗證 agent session 的 pane 才能建立安全排程。</p>
+          </div>
+
+          <div class="target-summary" id="target-summary" hidden>
+            <div class="route-line" aria-hidden="true"></div>
+            <div class="target-primary">
+              <div class="target-title-group">
+                <span class="target-title" id="target-title"></span>
+                <button class="inline-action" id="edit-target-alias" type="button" aria-label="重新命名" title="重新命名">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                </button>
+              </div>
+              <div class="pane-badges">
+                <span class="agent-label" id="target-agent-pill"></span>
+                <span class="status-label" id="target-status"></span>
+              </div>
+            </div>
+            <form class="alias-editor" id="target-alias-form" hidden>
+              <label for="target-alias-input">這段對話在 Pane Relay 顯示的名稱</label>
+              <div class="alias-editor-controls">
+                <input id="target-alias-input" maxlength="120" autocomplete="off" />
+                <button class="button button-quiet" type="submit">儲存</button>
+                <button class="button button-quiet" id="clear-target-alias" type="button">恢復原名</button>
+                <button class="button button-quiet" id="cancel-target-alias" type="button">取消</button>
+              </div>
+            </form>
+            <dl class="identity-grid">
+              <div><dt>Herdr session</dt><dd id="target-session"></dd></div>
+              <div><dt>Pane</dt><dd id="target-pane"></dd></div>
+              <div><dt>Agent</dt><dd id="target-agent"></dd></div>
+              <div><dt>對話指紋</dt><dd id="target-fingerprint"></dd></div>
+            </dl>
+            <div class="target-preview" id="target-preview" aria-label="選取 pane 的最近內容"></div>
+          </div>
+
+          <form id="schedule-form" class="schedule-form">
+            <fieldset id="schedule-fields" disabled>
+            <label class="field-block">
+              <span class="field-label">接續訊息</span>
+              <textarea id="message" name="message" rows="6" maxlength="8000" required>請接續原本的工作，從目前進度繼續完成。完成後請整理結果與尚未解決的問題。</textarea>
+              <span class="field-help"><span id="message-count">0</span> / 8000 字</span>
+            </label>
+
+            <div class="attachment-field">
+              <div class="attachment-heading">
+                <div>
+                  <span class="field-label">圖片附件</span>
+                  <span class="field-help">最多 5 張，每張 8 MB；可在訊息框按 Ctrl+V 貼上，排程時保存於本機</span>
+                </div>
+                <label class="button button-quiet attachment-button">
+                  選擇圖片
+                  <input id="attachment-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple />
+                </label>
+              </div>
+              <div class="attachment-list" id="attachment-list"></div>
+            </div>
+
+            <div class="time-grid">
+              <label class="field-block">
+                <span class="field-label">傳送時間</span>
+                <input id="scheduled-for" name="scheduledFor" type="datetime-local" required />
+              </label>
+              <label class="field-block">
+                <span class="field-label">重複</span>
+                <select id="recurrence" name="recurrence">
+                  <option value="once">只執行一次</option>
+                  <option value="daily">每天同一時間</option>
+                  <option value="weekly">每週同一天</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="quick-time" aria-label="快速設定時間">
+              <span>快速設定</span>
+              <button type="button" data-offset-minutes="30" aria-label="30 分鐘後">30 分</button>
+              <button type="button" data-offset-minutes="60" aria-label="1 小時後">1 小時</button>
+              <button type="button" data-offset-minutes="120" aria-label="2 小時後">2 小時</button>
+              <button type="button" data-offset-minutes="180" aria-label="3 小時後">3 小時</button>
+              <button type="button" data-offset-minutes="240" aria-label="4 小時後">4 小時</button>
+              <button type="button" data-offset-minutes="305" aria-label="5 小時 5 分後">5 小時 5 分</button>
+              <span class="quota-quick-times" id="quota-quick-times"></span>
+            </div>
+
+            <fieldset class="policy-fieldset">
+              <legend>傳送策略</legend>
+              <label class="policy-option">
+                <input type="radio" name="dispatchMode" value="settled" checked />
+                <span><strong>Agent 就緒後傳送</strong><small>只在 idle 或 done 時送出，其餘狀態會延後重試。</small></span>
+              </label>
+              <label class="policy-option">
+                <input type="radio" name="dispatchMode" value="exact" />
+                <span><strong>準時送出</strong><small>指紋相符就送出，即使 agent 正在工作或等待操作。</small></span>
+              </label>
+            </fieldset>
+
+            <label class="field-block grace-field">
+              <span class="field-label">最長等待時間</span>
+              <span class="number-with-unit">
+                <input id="grace-minutes" name="graceMinutes" type="number" min="1" max="1440" value="360" />
+                <span>分鐘</span>
+              </span>
+              <span class="field-help">只有「Agent 就緒後傳送」會使用這個設定。</span>
+            </label>
+
+              <div class="safety-note">
+                <strong>安全條件</strong>
+                <p>若 pane 已關閉、移動，或 agent session 指紋不同，排程會失敗且不會輸入任何文字。</p>
+                <p>Herdr 目前沒有原子式條件投遞。系統會在呼叫 agent prompt 前立即核對指紋，但程序恰好在兩個動作間被替換時仍有極短的競態窗口。</p>
+              </div>
+            </fieldset>
+          </form>
+        </div>
+        <div class="composer-actionbar">
+          <button class="button button-quiet send-immediately-button" id="send-immediately" type="button" disabled>立刻傳送</button>
+          <button class="button button-primary submit-button" id="schedule-submit" type="submit" form="schedule-form" disabled>建立排程</button>
+        </div>
+      </section>
+
+      <aside class="queue-panel" aria-labelledby="queue-title">
+        <div class="panel-heading">
+          <div>
+            <h2 id="queue-title">投遞佇列</h2>
+            <p id="queue-summary" role="status" aria-live="polite">讀取排程中</p>
+          </div>
+          <div class="queue-tabs" role="group" aria-label="排程篩選">
+            <button type="button" aria-pressed="true" data-job-filter="active">待執行</button>
+            <button type="button" aria-pressed="false" data-job-filter="history">歷史</button>
+          </div>
+        </div>
+        <div class="job-list" id="job-list"></div>
+      </aside>
+    </main>
+
+    <dialog class="job-dialog" id="job-dialog" aria-labelledby="job-dialog-title">
+      <div class="dialog-sheet">
+        <header class="dialog-heading">
+          <div>
+            <div class="dialog-title-line">
+              <h2 id="job-dialog-title"></h2>
+              <span class="status-label" id="job-dialog-status"></span>
+            </div>
+            <p id="job-dialog-timing"></p>
+          </div>
+          <button class="icon-button" id="close-job-dialog" type="button" aria-label="關閉排程內容" title="關閉">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </header>
+        <div class="dialog-body">
+          <label class="field-block">
+            <span class="field-label">接續訊息</span>
+            <textarea id="job-dialog-message" rows="10" maxlength="8000"></textarea>
+          </label>
+          <div class="job-dialog-summary" id="job-dialog-summary"></div>
+          <div class="job-dialog-attachments" id="job-dialog-attachments" hidden></div>
+          <details class="job-technical-details">
+            <summary>技術資訊</summary>
+            <dl id="job-dialog-technical"></dl>
+          </details>
+        </div>
+        <footer class="dialog-actions" id="job-dialog-actions"></footer>
+      </div>
+    </dialog>
+
+    <dialog class="confirm-dialog" id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-copy">
+      <form method="dialog" class="confirm-sheet">
+        <h2 id="confirm-title">確認立刻傳送</h2>
+        <p id="confirm-copy"></p>
+        <div class="confirm-actions">
+          <button class="button button-quiet" value="cancel">返回檢查</button>
+          <button class="button button-primary" id="confirm-accept" value="confirm">確認傳送</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
+  </body>
+</html>

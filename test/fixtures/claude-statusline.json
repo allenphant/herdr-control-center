@@ -1,0 +1,8 @@
+{
+  "session_id": "66f51c25-eed5-4baa-a4ad-1cd512eae451",
+  "version": "2.1.258",
+  "rate_limits": {
+    "five_hour": { "used_percentage": 97, "resets_at": 1788337800 },
+    "seven_day": { "used_percentage": 19, "resets_at": 1788663600 }
+  }
+}

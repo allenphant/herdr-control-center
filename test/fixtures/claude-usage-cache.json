@@ -1,0 +1,22 @@
+{
+  "five_hour": {
+    "utilization": 100.0,
+    "resets_at": "2026-09-02T08:29:59.815412+00:00",
+    "locked_reason": null
+  },
+  "seven_day": {
+    "utilization": 20.0,
+    "resets_at": "2026-09-06T02:59:59.815430+00:00",
+    "locked_reason": null
+  },
+  "limits": [
+    {
+      "kind": "session",
+      "group": "session",
+      "percent": 100,
+      "severity": "critical",
+      "resets_at": "2026-09-02T08:29:59.815412+00:00",
+      "is_active": true
+    }
+  ]
+}

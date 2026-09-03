@@ -1,0 +1,1 @@
+{"timestamp":"2026-09-02T05:51:00.000Z","payload":{"rate_limits":{"limit_id":"codex","primary":{"used_percent":6,"window_minutes":300,"resets_at":1788346217},"secondary":{"used_percent":53,"window_minutes":10080,"resets_at":1788829086},"credits":{"has_credits":false,"unlimited":false,"balance":"0"},"plan_type":"plus"}}}

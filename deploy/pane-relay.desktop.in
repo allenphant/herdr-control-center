@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Pane Relay
+Comment=開啟 Herdr pane 排程器
+Exec=@@PROJECT_DIR@@/scripts/open-pane-relay.sh
+Icon=utilities-terminal
+Terminal=false
+Categories=Development;Utility;
+StartupNotify=true
