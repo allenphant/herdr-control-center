@@ -62,7 +62,13 @@ Screenshot Editor 維護在獨立的 [Screenshot Editor repository](https://gith
 
 ### Demo
 
-請參考上方的桌面與行動版示意圖。
+<p align="center">
+  <img src="docs/demo/pane-relay-desktop.png" alt="Pane Relay 桌面控制中心" width="1200" />
+</p>
+
+<p align="center">
+  <img src="docs/demo/herdr-mobile.jpg" alt="Herdr 行動版工作流程" width="420" />
+</p>
 
 ### 文件
 
