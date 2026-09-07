@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Screenshot Editor</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <!--
+      THESIS: Screenshot Editor is a quiet marking bench for the exact image just captured; it refuses a hidden auto-copy step and makes editing an explicit action from the notification.
+      OWN-WORLD: Mineral paper, ruled work surfaces, deep routing green for the active tool, and warm ochre for the save-and-copy handoff.
+      STORY: Confirm the source, choose pen, rectangle, ellipse, or crop, make a small mark, then save a new annotated PNG without touching the original.
+      FIRST VIEWPORT: The source identity and tool rail sit above a large centered canvas; the right-hand action column keeps undo, crop confirmation, and save visible.
+      FORM: Operate surface extension, inherited from Pane Relay's switchboard dispatch ledger.
+      FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+    -->
+    <header class="topbar">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true">SE</span>
+        <div>
+          <p class="eyebrow">SCREENSHOT / MARKING BENCH</p>
+          <h1>Screenshot Editor</h1>
+        </div>
+      </div>
+      <div class="topbar-meta">
+        <span class="source-status" id="source-status">正在讀取圖片…</span>
+        <button class="button button-quiet" id="close-editor" type="button">關閉</button>
+      </div>
+    </header>
+
+    <main class="workbench">
+      <section class="workspace-panel" aria-labelledby="workspace-title">
+        <div class="workspace-heading">
+          <div>
+            <p class="section-kicker">CURRENT CAPTURE</p>
+            <h2 id="workspace-title">標記這張截圖</h2>
+          </div>
+          <p class="workspace-hint">原始檔案不會被覆寫</p>
+        </div>
+
+        <div class="canvas-stage" id="canvas-stage">
+          <div class="empty-state" id="empty-state" hidden>
+            <strong>找不到這張截圖</strong>
+            <p>請從最新的截圖通知重新開啟編輯器。</p>
+          </div>
+          <canvas id="editor-canvas" aria-label="截圖編輯畫布"></canvas>
+          <div class="stage-readout" id="stage-readout">—</div>
+        </div>
+
+        <div class="file-line">
+          <span class="file-dot" aria-hidden="true"></span>
+          <span class="file-path" id="file-path">等待圖片</span>
+        </div>
+      </section>
+
+      <aside class="tool-panel" aria-label="編輯工具">
+        <div class="tool-heading">
+          <div>
+            <p class="section-kicker">TOOLS</p>
+            <h2>快速標記</h2>
+          </div>
+          <span class="tool-count" id="tool-count">0 marks</span>
+        </div>
+
+        <div class="tool-group" role="toolbar" aria-label="繪圖工具">
+          <button class="tool-button is-active" data-tool="pen" type="button" aria-pressed="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1.1L19 8.1a2.1 2.1 0 0 0-3-3L5.2 15.8 4 20Z" /><path d="m14.5 6.5 3 3" /></svg>
+            <span><strong>畫筆</strong><small>自由手繪</small></span>
+          </button>
+          <button class="tool-button" data-tool="rect" type="button" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1" /></svg>
+            <span><strong>矩形</strong><small>框出區域</small></span>
+          </button>
+          <button class="tool-button" data-tool="ellipse" type="button" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="8" ry="6" /></svg>
+            <span><strong>圈選</strong><small>醒目標記</small></span>
+          </button>
+          <button class="tool-button" data-tool="crop" type="button" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v12a4 4 0 0 0 4 4h8M4 8h12a4 4 0 0 1 4 4v8" /></svg>
+            <span><strong>裁切</strong><small>保留選取範圍</small></span>
+          </button>
+        </div>
+
+        <div class="control-row">
+          <label class="field-block">
+            <span>顏色</span>
+            <input id="color-input" type="color" value="#bd5f18" aria-label="標記顏色" />
+          </label>
+          <label class="field-block range-field">
+            <span>線寬 <output id="line-width-value">6 px</output></span>
+            <input id="line-width" type="range" min="2" max="24" value="6" />
+          </label>
+        </div>
+
+        <div class="action-stack">
+          <div class="history-row">
+            <button class="button button-quiet" id="undo" type="button" disabled>↶ 復原</button>
+            <button class="button button-quiet" id="redo" type="button" disabled>↷ 重做</button>
+            <button class="button button-quiet button-danger" id="clear" type="button" disabled>清除標記</button>
+          </div>
+          <p class="crop-note" id="crop-note" hidden>拖曳畫布選取裁切範圍，再按下方確認。</p>
+          <button class="button button-confirm-crop" id="confirm-crop" type="button" hidden>套用裁切</button>
+          <button class="button button-save" id="save-image" type="button" disabled>
+            <span>再次儲存並複製</span>
+            <span class="button-arrow" aria-hidden="true">↗</span>
+          </button>
+          <p class="save-note" id="save-note">每次標記完成後自動另存並複製到剪貼簿</p>
+        </div>
+
+        <div class="shortcut-note">
+          <span class="shortcut-icon" aria-hidden="true">⌘</span>
+          <div><strong>快捷鍵</strong><p>Ctrl+Z 復原 · Ctrl+Y／Ctrl+Shift+Z 重做。每次變更都會自動複製。</p></div>
+        </div>
+      </aside>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>
