@@ -2,6 +2,8 @@
 
 > 語言 / Languages：繁體中文在前，English 在文件後半。
 
+## 繁體中文
+
 > 本文件是 [Herdr Control Center](../README.md) 的遠端存取指南。若要在瀏覽器中選定特定 pane、核對原對話並排程續作，請參閱 [Pane Relay 文件](pane-relay.md)。
 
 > **Mobile Herdr AI Agent Workflow & Remote Access Guide**

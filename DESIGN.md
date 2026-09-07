@@ -147,8 +147,59 @@ components:
 
 # Design System: Pane Relay
 
-> Languages: English design specification first, followed by 繁體中文說明。Machine-readable tokens remain language-neutral.
+> Languages: 繁體中文說明 first, followed by the English design specification. Machine-readable tokens remain language-neutral.
 
+## 中文說明
+
+本文件前半的 YAML token、元件規格與英文設計說明是實作參考；以下提供同一套設計決策的繁體中文版本。顏色 token、尺寸、CSS 變數與機器識別名稱維持原文，避免實作時產生歧義。
+
+### 設計核心：Switchboard Dispatch Ledger
+
+Pane Relay 應像安靜而精準的交換台帳：使用者選定一條路由、驗證一個 conversation fingerprint，然後允許一筆投遞紀錄繼續執行。明亮的礦物紙與深色礦物夜表面讓工作區保持平靜；深綠色 routing signal 只標示即時且已驗證的路徑。
+
+元件風格要克制、明確、可操作。階層來自規則線、方正的 routing rail、表格式識別文字與緊湊的狀態標籤，而不是裝飾性的 dashboard card。pane rail、composer 與 queue 必須讀起來像同一個連續的投遞系統，每個重要狀態都要同時用文字與顏色表達。
+
+### 色彩
+
+- 明亮與深色主題都使用低彩度礦物背景。
+- Deep Routing Green 只用於選定 pane、focus、working state、已驗證路徑與主要投遞動作。
+- Action Green 專門承載 composer 的主要排程動作，比 routing accent 更深。
+- Resolved Green 表示 idle、done、sent、online；Deferred Ochre 表示 waiting、blocked、paused、connecting；Refusal Red 表示 failed、canceled、連線錯誤與破壞性操作。
+- 所有 success、warning、danger 顏色都必須搭配可讀的狀態文字與穩定形狀，不能只靠顏色傳達意思。
+
+### 字體與識別文字
+
+標題與內文使用系統 UI sans serif；pane ID、fingerprint、session name、時區與 timestamp 使用 UI monospace，並在需要對齊的數值使用 tabular numerals。Monospace 只代表實際的機器識別或時間資料，不作為終端機風格裝飾。
+
+### 布局
+
+桌面版是連續的三欄 ledger：左側 live conversation index、中央較寬的 composer、右側 queue。展開 workspace 時，優先依 Herdr 真實 rectangle 顯示比例 pane map；清單模式是明確的替代方案，也是密集或不一致布局的安全 fallback。三欄以一像素 seam 連在同一個 rounded shell 裡。
+
+在較窄寬度，queue 移到 route/composer 下方；手機版改成單欄 ledger，解除內部滾動，收合 identity/time grid，並把 composer action 固定在 viewport 底部。空間必須緊湊且重複，避免不必要的裝飾性留白。
+
+### 深度、形狀與選取
+
+主要 shell 使用唯一的 ambient shadow；fields、summaries、records 與 routing choices 維持扁平，主要靠 surface tone、規則線與 inset rail 建立層次。整體輪廓採柔和方角：shell 最大 16px、controls 10px、records 11–14px、status chip 7px。
+
+垂直綠色 rail 代表精確的 selected 或 verified route，不能當成一般裝飾。pane option 使用 2px rail，verified target summary 使用 4px rail；空的 target 才使用刻意的虛線框。
+
+### 元件
+
+- **Buttons**：一般 controls 最低 38px，觸控密度較高的 queue/job actions 最低 44px；主要排程 action 全寬、最低 46px。鍵盤 focus 必須有清楚的三像素半透明 outline。
+- **Chips**：狀態 chip 使用緊湊圓角、語意顏色與明確文字；快速時間按鈕使用 raised surface 與 border。
+- **Cards / Containers**：pane routes、verified target、queue records 與 quota overlay 都以表面色、規則線與 routing rail 建立層次，不使用大量陰影。
+- **Inputs / Fields**：使用 raised surface、明確 border、10px 圓角與至少 42px 高度；textarea 至少 138px，focus 時 border 轉為 Routing Green。
+- **Navigation**：workspace 是可收合、帶 sticky heading 的 ruled group；pane 可使用真實幾何或清單模式。附件要有原生 file picker、縮圖、類型/大小限制與移除操作，queue 只顯示附件摘要，不暴露本機路徑。
+- **Dispatch Composer**：依序呈現 verified target、訊息、日期/週期、快速時間、投遞策略、等待上限、安全提示與固定在底部的主要 action。
+- **Service feedback**：服務狀態使用語意 dot、ring 與文字；toast 使用 raised surface、strong rule 與錯誤色 border。
+
+### 應做與避免
+
+應讓 pane 選取、fingerprint 驗證、排程建立與 queue resolution 保持視覺連續；以最近終端內容協助辨識重複標題；只在 verified routing、active state、focus 與主要投遞 action 使用深綠色；每個語意色都配上狀態文字；寬螢幕保留三欄，手機保留底部主要 action。
+
+避免依 Agent 顯示名稱而非 pane/fingerprint 路由；避免裝飾性 dashboard cards、promotional metrics、gradients 與 marketing claims；避免把 monospace 當成終端機裝飾；避免沒有真實狀態意義的綠 rail、語意色與 danger color；避免在 records、fields、policy options 到處添加浮動陰影，也不要把主要排程 action 藏離 composer 底部。
+
+## English
 ## Overview
 
 **Creative North Star: "The Switchboard Dispatch Ledger"**
@@ -308,53 +359,3 @@ The service state uses a small semantic dot with a soft ring plus explicit text.
 - **Don't** use green rails, semantic fills, or danger color without a real state meaning.
 - **Don't** scatter floating shadows across records, fields, or policy options.
 - **Don't** hide the primary schedule action above or away from the composer's foot.
-
-## 中文說明
-
-本文件前半的 YAML token、元件規格與英文設計說明是實作參考；以下提供同一套設計決策的繁體中文版本。顏色 token、尺寸、CSS 變數與機器識別名稱維持原文，避免實作時產生歧義。
-
-### 設計核心：Switchboard Dispatch Ledger
-
-Pane Relay 應像安靜而精準的交換台帳：使用者選定一條路由、驗證一個 conversation fingerprint，然後允許一筆投遞紀錄繼續執行。明亮的礦物紙與深色礦物夜表面讓工作區保持平靜；深綠色 routing signal 只標示即時且已驗證的路徑。
-
-元件風格要克制、明確、可操作。階層來自規則線、方正的 routing rail、表格式識別文字與緊湊的狀態標籤，而不是裝飾性的 dashboard card。pane rail、composer 與 queue 必須讀起來像同一個連續的投遞系統，每個重要狀態都要同時用文字與顏色表達。
-
-### 色彩
-
-- 明亮與深色主題都使用低彩度礦物背景。
-- Deep Routing Green 只用於選定 pane、focus、working state、已驗證路徑與主要投遞動作。
-- Action Green 專門承載 composer 的主要排程動作，比 routing accent 更深。
-- Resolved Green 表示 idle、done、sent、online；Deferred Ochre 表示 waiting、blocked、paused、connecting；Refusal Red 表示 failed、canceled、連線錯誤與破壞性操作。
-- 所有 success、warning、danger 顏色都必須搭配可讀的狀態文字與穩定形狀，不能只靠顏色傳達意思。
-
-### 字體與識別文字
-
-標題與內文使用系統 UI sans serif；pane ID、fingerprint、session name、時區與 timestamp 使用 UI monospace，並在需要對齊的數值使用 tabular numerals。Monospace 只代表實際的機器識別或時間資料，不作為終端機風格裝飾。
-
-### 布局
-
-桌面版是連續的三欄 ledger：左側 live conversation index、中央較寬的 composer、右側 queue。展開 workspace 時，優先依 Herdr 真實 rectangle 顯示比例 pane map；清單模式是明確的替代方案，也是密集或不一致布局的安全 fallback。三欄以一像素 seam 連在同一個 rounded shell 裡。
-
-在較窄寬度，queue 移到 route/composer 下方；手機版改成單欄 ledger，解除內部滾動，收合 identity/time grid，並把 composer action 固定在 viewport 底部。空間必須緊湊且重複，避免不必要的裝飾性留白。
-
-### 深度、形狀與選取
-
-主要 shell 使用唯一的 ambient shadow；fields、summaries、records 與 routing choices 維持扁平，主要靠 surface tone、規則線與 inset rail 建立層次。整體輪廓採柔和方角：shell 最大 16px、controls 10px、records 11–14px、status chip 7px。
-
-垂直綠色 rail 代表精確的 selected 或 verified route，不能當成一般裝飾。pane option 使用 2px rail，verified target summary 使用 4px rail；空的 target 才使用刻意的虛線框。
-
-### 元件
-
-- **Buttons**：一般 controls 最低 38px，觸控密度較高的 queue/job actions 最低 44px；主要排程 action 全寬、最低 46px。鍵盤 focus 必須有清楚的三像素半透明 outline。
-- **Chips**：狀態 chip 使用緊湊圓角、語意顏色與明確文字；快速時間按鈕使用 raised surface 與 border。
-- **Cards / Containers**：pane routes、verified target、queue records 與 quota overlay 都以表面色、規則線與 routing rail 建立層次，不使用大量陰影。
-- **Inputs / Fields**：使用 raised surface、明確 border、10px 圓角與至少 42px 高度；textarea 至少 138px，focus 時 border 轉為 Routing Green。
-- **Navigation**：workspace 是可收合、帶 sticky heading 的 ruled group；pane 可使用真實幾何或清單模式。附件要有原生 file picker、縮圖、類型/大小限制與移除操作，queue 只顯示附件摘要，不暴露本機路徑。
-- **Dispatch Composer**：依序呈現 verified target、訊息、日期/週期、快速時間、投遞策略、等待上限、安全提示與固定在底部的主要 action。
-- **Service feedback**：服務狀態使用語意 dot、ring 與文字；toast 使用 raised surface、strong rule 與錯誤色 border。
-
-### 應做與避免
-
-應讓 pane 選取、fingerprint 驗證、排程建立與 queue resolution 保持視覺連續；以最近終端內容協助辨識重複標題；只在 verified routing、active state、focus 與主要投遞 action 使用深綠色；每個語意色都配上狀態文字；寬螢幕保留三欄，手機保留底部主要 action。
-
-避免依 Agent 顯示名稱而非 pane/fingerprint 路由；避免裝飾性 dashboard cards、promotional metrics、gradients 與 marketing claims；避免把 monospace 當成終端機裝飾；避免沒有真實狀態意義的綠 rail、語意色與 danger color；避免在 records、fields、policy options 到處添加浮動陰影，也不要把主要排程 action 藏離 composer 底部。

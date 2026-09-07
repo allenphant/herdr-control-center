@@ -1,7 +1,83 @@
 # Cross-Session Data Relay — Backlog Proposal
 
-> Languages: English first, followed by 繁體中文。The relay remains planned and is not implemented.
+> Languages: 繁體中文 first, followed by English. The relay remains planned and is not implemented.
 
+## 繁體中文
+
+### 產品結果
+
+把 Herdr Control Center 發展成由使用者控制的 relay，支援跨越彼此獨立的 Herdr named session 的長時間工作。代表情境是感染管制年報流程：一個持久 Agent 驗證新到資料，使用者核准結構化輸出，另一個持久 Agent 只消費核准過的 artifact 來更新報告。
+
+這個功能不會把完整 conversation context 從一個 Agent 搬到另一個 Agent，也不會在 quota limit 時自動把主線任務轉交給其他 Agent。
+
+### 主要情境
+
+```text
+新工作簿
+   |
+   v
+data-pipeline session / 驗證 Agent
+   |
+   | 清理後資料 + validation manifest
+   v
+Control Center 核准閘門
+   |
+   v
+annual-report session / 報告 Agent
+   |
+   | 報告 + 變更摘要
+   v
+可選的簡報 session
+```
+
+每個 Agent 保留自己的原生 conversation、工作目錄、權限與 project instructions。Control Center 只搬運明確的任務與 artifact，不搬運隱藏的對話狀態。
+
+### Phase 1 — MVP
+
+- 使用者可從一個精確的 source Herdr session/pane 建立 relay 到精確的 target session/pane。
+- 投遞前捕獲並重新驗證兩端的 native agent-session fingerprint。
+- 提供包含目的、核准 artifact 路徑、限制與完成條件的 task composer。
+- 等待 target Agent settled 後，透過 `herdr agent prompt` 送出。
+- 記錄 queued、waiting、sent、blocked、completed、canceled、expired 與 failed 狀態。
+- 任何結果返回 source Agent 或轉送到其他 session 前，都要求使用者確認。
+- pane 消失、fingerprint 改變或 restore 後 target 身分不明時安全停止。
+
+### Phase 2 — Nice to have
+
+- 使用 `request.json`、`response.md`、`result.json` 的持久 exchange mailbox。
+- Artifact preview、validation summary 與 approve/reject gate。
+- 只有在同一 native agent-session fingerprint 有唯一匹配時，才重新綁定 restore 後的 pane。
+- 每個執行中的 named session 使用一個 `session.snapshot` 加 socket subscription 的事件驅動 UI。
+- 具備 audit trail 的 retry 與 deadline policy。
+
+### Phase 3 — Future
+
+- 受界線控制的 validation → report → presentation pipeline。
+- 平行 fan-out 後由使用者控制 merge。
+- 每一步的 permission profile、budget、deadline 與 hop limit。
+- 不同主機之間的 authenticated relay；絕不能直接暴露目前只綁 loopback 的服務。
+
+### 非目標
+
+- 將某一家 Agent vendor 的完整 conversation context 泛用轉移給另一家 Agent。
+- quota 用盡後自動接管跨 Agent 任務。
+- 自主的 Agent-to-agent 無限對話迴圈。
+- 把 terminal screen scraping 當作持久 reply protocol。
+- 將未核准的敏感來源資料送到信任程度較低的 session。
+
+### Phase 1 驗收條件
+
+1. 使用者可以從不同的 Herdr named session 選擇 source 與 target Agent。
+2. 確認前 UI 顯示 session、workspace、tab、pane、cwd、status 與 native conversation identity。
+3. 任一捕獲的 fingerprint 不再相符時，投遞必須拒絕。
+4. target 忙碌時進入 queue，settled 後重新驗證；`unknown` 永遠不能算完成。
+5. 每次狀態轉移都要持久化，但不能持久化任意 pane output。
+6. 沒有使用者明確確認，不得把 response 送入另一段對話。
+7. 自動化測試涵蓋 occupant 變更、session 停止、restore/rebind 歧義、deadline 與重複投遞防護。
+
+下面的 JSON topology 是機器可讀的架構資料，節點名稱與 payload 欄位維持英文以供工具使用。
+
+## English
 Status: planned, not implemented
 
 ## Product outcome
@@ -176,78 +252,3 @@ Each agent remains in its own native conversation, working directory, permission
   ]
 }
 ```
-
-## 繁體中文
-
-### 產品結果
-
-把 Herdr Control Center 發展成由使用者控制的 relay，支援跨越彼此獨立的 Herdr named session 的長時間工作。代表情境是感染管制年報流程：一個持久 Agent 驗證新到資料，使用者核准結構化輸出，另一個持久 Agent 只消費核准過的 artifact 來更新報告。
-
-這個功能不會把完整 conversation context 從一個 Agent 搬到另一個 Agent，也不會在 quota limit 時自動把主線任務轉交給其他 Agent。
-
-### 主要情境
-
-```text
-新工作簿
-   |
-   v
-data-pipeline session / 驗證 Agent
-   |
-   | 清理後資料 + validation manifest
-   v
-Control Center 核准閘門
-   |
-   v
-annual-report session / 報告 Agent
-   |
-   | 報告 + 變更摘要
-   v
-可選的簡報 session
-```
-
-每個 Agent 保留自己的原生 conversation、工作目錄、權限與 project instructions。Control Center 只搬運明確的任務與 artifact，不搬運隱藏的對話狀態。
-
-### Phase 1 — MVP
-
-- 使用者可從一個精確的 source Herdr session/pane 建立 relay 到精確的 target session/pane。
-- 投遞前捕獲並重新驗證兩端的 native agent-session fingerprint。
-- 提供包含目的、核准 artifact 路徑、限制與完成條件的 task composer。
-- 等待 target Agent settled 後，透過 `herdr agent prompt` 送出。
-- 記錄 queued、waiting、sent、blocked、completed、canceled、expired 與 failed 狀態。
-- 任何結果返回 source Agent 或轉送到其他 session 前，都要求使用者確認。
-- pane 消失、fingerprint 改變或 restore 後 target 身分不明時安全停止。
-
-### Phase 2 — Nice to have
-
-- 使用 `request.json`、`response.md`、`result.json` 的持久 exchange mailbox。
-- Artifact preview、validation summary 與 approve/reject gate。
-- 只有在同一 native agent-session fingerprint 有唯一匹配時，才重新綁定 restore 後的 pane。
-- 每個執行中的 named session 使用一個 `session.snapshot` 加 socket subscription 的事件驅動 UI。
-- 具備 audit trail 的 retry 與 deadline policy。
-
-### Phase 3 — Future
-
-- 受界線控制的 validation → report → presentation pipeline。
-- 平行 fan-out 後由使用者控制 merge。
-- 每一步的 permission profile、budget、deadline 與 hop limit。
-- 不同主機之間的 authenticated relay；絕不能直接暴露目前只綁 loopback 的服務。
-
-### 非目標
-
-- 將某一家 Agent vendor 的完整 conversation context 泛用轉移給另一家 Agent。
-- quota 用盡後自動接管跨 Agent 任務。
-- 自主的 Agent-to-agent 無限對話迴圈。
-- 把 terminal screen scraping 當作持久 reply protocol。
-- 將未核准的敏感來源資料送到信任程度較低的 session。
-
-### Phase 1 驗收條件
-
-1. 使用者可以從不同的 Herdr named session 選擇 source 與 target Agent。
-2. 確認前 UI 顯示 session、workspace、tab、pane、cwd、status 與 native conversation identity。
-3. 任一捕獲的 fingerprint 不再相符時，投遞必須拒絕。
-4. target 忙碌時進入 queue，settled 後重新驗證；`unknown` 永遠不能算完成。
-5. 每次狀態轉移都要持久化，但不能持久化任意 pane output。
-6. 沒有使用者明確確認，不得把 response 送入另一段對話。
-7. 自動化測試涵蓋 occupant 變更、session 停止、restore/rebind 歧義、deadline 與重複投遞防護。
-
-下面的 JSON topology 是機器可讀的架構資料，節點名稱與 payload 欄位維持英文以供工具使用。
