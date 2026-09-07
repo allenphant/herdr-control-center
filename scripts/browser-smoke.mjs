@@ -486,9 +486,30 @@ try {
     if (noisyCardDetails) throw new Error("Queue card still exposes technical identity details");
     await webdriver(`/session/${sessionId}/element/${existingJob}/click`, { method: "POST", body: {} });
     const existingEditor = await find("#job-dialog[open] #job-dialog-message");
-    await find("#job-dialog-scheduled-for");
+    const existingTime = await find("#job-dialog-scheduled-for");
+    const jobQuotaTime = await find("[data-job-quota-agent]");
     const editable = !await webdriver(`/session/${sessionId}/element/${existingEditor}/property/readOnly`);
     if (editable) {
+      const quotaDisabled = await webdriver(`/session/${sessionId}/element/${jobQuotaTime}/property/disabled`);
+      if (!quotaDisabled) {
+        await webdriver(`/session/${sessionId}/element/${jobQuotaTime}/click`, { method: "POST", body: {} });
+        const quotaValue = await webdriver(`/session/${sessionId}/element/${existingTime}/property/value`);
+        if (new Date(quotaValue).getTime() <= Date.now()) {
+          throw new Error(`Job dialog quota quick time is not in the future: ${quotaValue}`);
+        }
+      }
+      const threeHoursFromJob = await find("[data-job-offset-minutes='180']");
+      await webdriver(`/session/${sessionId}/element/${threeHoursFromJob}/click`, { method: "POST", body: {} });
+      const quickOffset = await webdriver(`/session/${sessionId}/execute/sync`, {
+        method: "POST",
+        body: {
+          script: "return Math.round((new Date(document.querySelector('#job-dialog-scheduled-for').value).getTime() - Date.now()) / 60000);",
+          args: [],
+        },
+      });
+      if (quickOffset < 179 || quickOffset > 180) {
+        throw new Error(`Job dialog three-hour quick time produced ${quickOffset} minutes`);
+      }
       const original = await webdriver(`/session/${sessionId}/element/${existingEditor}/property/value`);
       await clearElement(existingEditor);
       await sendKeys(existingEditor, `${original}\n背景刷新保留測試`);
@@ -497,6 +518,8 @@ try {
       if (!preserved.endsWith("背景刷新保留測試")) {
         throw new Error("Background refresh overwrote unsaved job edits");
       }
+      const preservedTime = await webdriver(`/session/${sessionId}/element/${existingTime}/property/value`);
+      if (!preservedTime) throw new Error("Background refresh cleared the job quick time");
     }
     const closeJobDialog = await find("#close-job-dialog");
     await webdriver(`/session/${sessionId}/element/${closeJobDialog}/click`, { method: "POST", body: {} });

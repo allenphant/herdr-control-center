@@ -13,6 +13,7 @@ const ui = {
   jobDialogActions: document.querySelector("#job-dialog-actions"),
   jobDialogAttachments: document.querySelector("#job-dialog-attachments"),
   jobDialogMessage: document.querySelector("#job-dialog-message"),
+  jobDialogQuickTime: document.querySelector("#job-dialog-quick-time"),
   jobDialogScheduledFor: document.querySelector("#job-dialog-scheduled-for"),
   jobDialogStatus: document.querySelector("#job-dialog-status"),
   jobDialogSummary: document.querySelector("#job-dialog-summary"),
@@ -1588,6 +1589,7 @@ function renderQuota() {
   if (appState.quota?.error) {
     ui.quotaGrid.append(element("div", { className: "quota-loading is-error", text: appState.quota.error }));
     renderQuotaQuickTimes();
+    if (ui.jobDialog.open) renderJobDialog({ preserveEdits: true });
     return;
   }
   const providers = appState.quota?.providers || {};
@@ -1597,6 +1599,7 @@ function renderQuota() {
     agyQuotaCard(providers.agy),
   );
   renderQuotaQuickTimes();
+  if (ui.jobDialog.open) renderJobDialog({ preserveEdits: true });
 }
 
 async function loadQuota({ force = false, announce = false } = {}) {
@@ -1615,8 +1618,7 @@ async function loadQuota({ force = false, announce = false } = {}) {
   }
 }
 
-function selectedQuotaTargets() {
-  const agent = appState.selected?.pane?.agent;
+function quotaTargetsForAgent(agent) {
   const providers = appState.quota?.providers || {};
   if (agent === "codex") {
     return [{ key: "codex", label: "Codex 額度重置後", reset: providers.codex?.windows?.fiveHour?.resetsAt }];
@@ -1632,6 +1634,10 @@ function selectedQuotaTargets() {
     }));
   }
   return [];
+}
+
+function selectedQuotaTargets() {
+  return quotaTargetsForAgent(appState.selected?.pane?.agent);
 }
 
 function setDateAfterReset(value) {
@@ -1657,6 +1663,53 @@ function renderQuotaQuickTimes() {
       ...(target.reset ? {} : { disabled: "" }),
       title: target.reset ? `${quotaResetLabel(target.reset)}，另加 2 分鐘緩衝` : "尚未取得重置時間",
       on: { click: () => setDateAfterReset(target.reset) },
+    }));
+  }
+}
+
+function setJobDateOffset(minutes) {
+  const date = new Date(Date.now() + minutes * 60_000);
+  date.setSeconds(0, 0);
+  ui.jobDialogScheduledFor.value = toDateTimeLocal(date);
+  ui.jobDialogScheduledFor.min = toDateTimeLocal(new Date());
+  appState.jobDialogDirty = true;
+}
+
+function setJobDateAfterReset(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) {
+    toast("這個額度重置時間已過，請先更新額度", "error");
+    return;
+  }
+  date.setMinutes(date.getMinutes() + 2, 0, 0);
+  ui.jobDialogScheduledFor.value = toDateTimeLocal(date);
+  ui.jobDialogScheduledFor.min = toDateTimeLocal(new Date());
+  appState.jobDialogDirty = true;
+  toast(`已改為額度重置後 2 分鐘：${formatDate(date.toISOString())}`);
+}
+
+function renderJobQuickTimes(job, editable) {
+  ui.jobDialogQuickTime.replaceChildren(element("span", { text: "快速設定" }));
+  const quotaButtons = element("span", { className: "quota-quick-times" });
+  const agent = job.targetSnapshot?.agent || job.expectedFingerprint?.agent;
+  for (const target of quotaTargetsForAgent(agent)) {
+    quotaButtons.append(element("button", {
+      type: "button",
+      text: target.label,
+      disabled: editable && target.reset ? null : "",
+      dataset: { jobQuotaAgent: target.key },
+      title: target.reset ? `${quotaResetLabel(target.reset)}，另加 2 分鐘緩衝` : "尚未取得重置時間",
+      on: { click: () => setJobDateAfterReset(target.reset) },
+    }));
+  }
+  ui.jobDialogQuickTime.append(quotaButtons);
+  for (const [minutes, label] of [[30, "30 分"], [60, "1 小時"], [120, "2 小時"], [180, "3 小時"], [240, "4 小時"], [305, "5 小時 5 分"]]) {
+    ui.jobDialogQuickTime.append(element("button", {
+      type: "button",
+      text: label,
+      disabled: editable ? null : "",
+      dataset: { jobOffsetMinutes: minutes },
+      on: { click: () => setJobDateOffset(minutes) },
     }));
   }
 }
@@ -1828,6 +1881,7 @@ function renderJobDialog({ preserveEdits = false } = {}) {
   ui.jobDialogMessage.dataset.editable = String(editable);
   ui.jobDialogScheduledFor.disabled = !editable;
   ui.jobDialogScheduledFor.min = toDateTimeLocal(new Date());
+  renderJobQuickTimes(job, editable);
   ui.jobDialogSummary.replaceChildren(
     summaryItem("執行方式", recurrenceLabel(job)),
     summaryItem("傳送條件", deliveryRuleLabel(job)),

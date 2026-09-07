@@ -2677,6 +2677,10 @@ dialog::backdrop {
   max-width: 360px;
 }
 
+.job-dialog-quick-time {
+  margin: -7px 0 2px;
+}
+
 #job-dialog-scheduled-for:disabled {
   color: var(--ink-soft);
   background: var(--surface-muted);
