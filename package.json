@@ -11,7 +11,7 @@
     "test:browser": "node scripts/browser-smoke.mjs",
     "benchmark:conversation-search": "node scripts/benchmark-conversation-search.mjs",
     "verify:conversation-search:live": "node scripts/verify-live-conversation-search.mjs",
-    "check": "node --check src/herdr-client.js && node --check src/quota-provider.js && node --check src/store.js && node --check src/scheduler.js && node --check src/transcripts/shared.js && node --check src/transcripts/claude.js && node --check src/transcripts/codex.js && node --check src/transcripts/agy.js && node --check src/conversation-search.js && node --check src/server.js && node --check public/conversation-request-state.js && node --check public/app.js && node --check scripts/benchmark-conversation-search.mjs && node --check scripts/verify-live-conversation-search.mjs && node --check scripts/browser-smoke.mjs && node --check scripts/install-claude-quota-relay.mjs"
+    "check": "node --check src/herdr-client.js && node --check src/quota-provider.js && node --check src/store.js && node --check src/scheduler.js && node --check src/transcripts/shared.js && node --check src/transcripts/claude.js && node --check src/transcripts/codex.js && node --check src/transcripts/agy.js && node --check src/conversation-search.js && node --check src/server.js && node --check public/conversation-request-state.js && node --check public/markdown.js && node --check public/app.js && node --check scripts/benchmark-conversation-search.mjs && node --check scripts/verify-live-conversation-search.mjs && node --check scripts/browser-smoke.mjs && node --check scripts/install-claude-quota-relay.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -1,4 +1,5 @@
 import { ConversationRequestState } from "./conversation-request-state.js";
+import { renderMarkdown } from "./markdown.js";
 
 const ui = {
   attachmentInput: document.querySelector("#attachment-input"),
@@ -1174,17 +1175,8 @@ function resetConversationSearch() {
     context: [],
     contextLoading: false,
     error: null,
+    query: "",
   });
-}
-
-function appendHighlightedText(node, text, ranges = []) {
-  let offset = 0;
-  for (const range of ranges) {
-    if (range.start > offset) node.append(document.createTextNode(text.slice(offset, range.start)));
-    node.append(element("mark", { text: text.slice(range.start, range.end) }));
-    offset = range.end;
-  }
-  if (offset < text.length) node.append(document.createTextNode(text.slice(offset)));
 }
 
 function renderConversationContext() {
@@ -1211,6 +1203,8 @@ function renderConversationContext() {
     ? `已載入訊息 ${active.ordinal + 1} 的前後文`
     : "前後文";
   for (const message of state.context) {
+    const body = element("div", { className: "conversation-message-body" });
+    renderMarkdown(body, message.text, { highlight: state.query });
     ui.conversationContext.append(element("article", {
       className: `conversation-message ${message.anchor === state.activeAnchor ? "is-active" : ""}`.trim(),
       dataset: { role: message.role },
@@ -1219,7 +1213,7 @@ function renderConversationContext() {
         element("strong", { text: message.role === "user" ? "User" : "Assistant" }),
         element("span", { text: message.timestamp ? formatDate(message.timestamp, true) : `#${message.ordinal + 1}` }),
       ]),
-      element("p", { text: message.text }),
+      body,
     ]));
   }
   requestAnimationFrame(() => {
@@ -1254,7 +1248,7 @@ function renderConversationSearch() {
   } else {
     for (const hit of state.hits) {
       const snippet = element("span", { className: "conversation-hit-snippet" });
-      appendHighlightedText(snippet, hit.snippet, hit.matchRanges);
+      renderMarkdown(snippet, hit.snippet, { highlight: state.query, inlineOnly: true });
       ui.conversationResults.append(element("button", {
         className: `conversation-hit ${hit.anchor === state.activeAnchor ? "is-active" : ""}`.trim(),
         type: "button",
@@ -1299,6 +1293,7 @@ async function runConversationSearch({ append = false } = {}) {
   const requestId = state.beginSearch({ replace: !append });
   state.error = null;
   if (!append) {
+    state.query = query;
     state.hits = [];
     state.nextCursor = null;
     state.revision = null;

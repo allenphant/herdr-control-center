@@ -10,6 +10,7 @@ export class ConversationRequestState {
     this.activeAnchor = null;
     this.context = [];
     this.error = null;
+    this.query = "";
   }
 
   beginSearch({ replace = false } = {}) {

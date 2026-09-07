@@ -38,6 +38,7 @@ The product runs locally beside a persistent Herdr session. The user identifies 
 - Verify the expected `agent_session` identity immediately before delivery.
 - Safely repair a missing Codex or AGY `agent_session` from unique live-process evidence, with automatic and manual GUI triggers.
 - Search the complete visible user/assistant conversation bound to the selected pane across Claude, Codex, and AGY transcripts, with fingerprint revalidation and stable context navigation.
+- Render conversation Markdown as safe browser-native DOM, preserving headings, emphasis, lists, quotes, code, tables, and highlighted search terms without executing raw HTML.
 - Require the fingerprint captured when the user selected the pane to still match when the schedule is created.
 - Deliver only through `herdr agent prompt <pane-id>`, never through raw pane text or shell execution.
 - Refuse delivery when the pane is missing, has no recognized agent, or contains a different agent session.

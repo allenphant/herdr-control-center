@@ -160,6 +160,8 @@ try {
           bodyBackground: body.backgroundColor,
           withinViewport: rect.left >= 0 && rect.top >= 0
             && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight,
+          panelWidth: rect.width,
+          viewportWidth: window.innerWidth,
         };
       `,
       args: [],
@@ -170,6 +172,7 @@ try {
     || !quotaOverlay.backdropFilter.includes("blur")
     || quotaOverlay.panelBackground === quotaOverlay.bodyBackground
     || !quotaOverlay.withinViewport
+    || (browserWidth > 1280 && quotaOverlay.panelWidth < Math.min(1700, quotaOverlay.viewportWidth - 40))
   ) {
     throw new Error(`Quota overlay treatment is incomplete: ${JSON.stringify(quotaOverlay)}`);
   }
@@ -332,8 +335,8 @@ try {
                 ordinal: 12,
                 role: 'assistant',
                 timestamp: '2026-01-02T03:04:05.000Z',
-                snippet: 'The visible needle is anchored to this message.',
-                matchRanges: [{ start: 12, end: 18 }]
+                snippet: 'The **visible needle** is anchored to \`message.id\`.',
+                matchRanges: [{ start: 14, end: 20 }]
               }],
               nextCursor: null
             }), { status: 200, headers: { 'content-type': 'application/json' } }));
@@ -346,7 +349,7 @@ try {
               anchor: 'codex:item-a:0',
               messages: [
                 { provider: 'codex', conversationId: 'x', anchor: 'codex:item-u:0', ordinal: 11, role: 'user', timestamp: '2026-01-02T03:04:00.000Z', text: 'Please locate the exact phrase.' },
-                { provider: 'codex', conversationId: 'x', anchor: 'codex:item-a:0', ordinal: 12, role: 'assistant', timestamp: '2026-01-02T03:04:05.000Z', text: 'The visible needle is anchored to this message.' }
+                { provider: 'codex', conversationId: 'x', anchor: 'codex:item-a:0', ordinal: 12, role: 'assistant', timestamp: '2026-01-02T03:04:05.000Z', text: '## Search result\\n\\nThe **visible needle** is anchored to \`message.id\`.\\n\\n- Markdown is rendered\\n- DDD_NO_WHO stays intact\\n- <script data-md-test>unsafe()</script> stays text' }
               ]
             }), { status: 200, headers: { 'content-type': 'application/json' } }));
           }
@@ -377,6 +380,20 @@ try {
   const hitButton = await find(".conversation-hit");
   await webdriver(`/session/${sessionId}/element/${hitButton}/click`, { method: "POST", body: {} });
   await find(".conversation-message.is-active");
+  await find(".conversation-message.is-active .markdown-body h2");
+  await find(".conversation-message.is-active .markdown-body strong mark");
+  await find(".conversation-message.is-active .markdown-body code");
+  await find(".conversation-message.is-active .markdown-body ul");
+  const unsafeMarkdownNodeCount = await webdriver(`/session/${sessionId}/execute/sync`, {
+    method: "POST",
+    body: {
+      script: "return document.querySelectorAll('script[data-md-test]').length;",
+      args: [],
+    },
+  });
+  if (unsafeMarkdownNodeCount !== 0) throw new Error("Markdown renderer created an unsafe HTML node");
+  const markdownText = await webdriver(`/session/${sessionId}/element/${await find(".conversation-message.is-active .markdown-body")}/text`);
+  if (!markdownText.includes("DDD_NO_WHO")) throw new Error("Markdown renderer altered an underscore identifier");
   const conversationBounds = await webdriver(`/session/${sessionId}/execute/sync`, {
     method: "POST",
     body: {
