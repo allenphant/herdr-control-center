@@ -319,6 +319,39 @@ try {
   if (!fingerprint || fingerprint === "無法驗證") {
     throw new Error("Conversation fingerprint was not rendered");
   }
+  const draftResult = await webdriver(`/session/${sessionId}/execute/async`, {
+    method: "POST",
+    body: {
+      script: `
+        const done = arguments[arguments.length - 1];
+        const firstPane = document.querySelector('#target-pane').textContent;
+        const firstSession = document.querySelector('#target-session').textContent;
+        const first = document.querySelector('#message');
+        first.value = 'pane A 尚未送出的草稿';
+        first.dispatchEvent(new Event('input', { bubbles: true }));
+        const second = [...document.querySelectorAll('.pane-choice:not(.is-unsupported)')].find(
+          (button) => button.dataset.routePane !== firstPane || button.dataset.routeSession !== firstSession
+        );
+        if (!second) return done({ skipped: true });
+        second.click();
+        setTimeout(() => {
+          const secondMessage = document.querySelector('#message');
+          secondMessage.value = 'pane B 尚未送出的草稿';
+          secondMessage.dispatchEvent(new Event('input', { bubbles: true }));
+          const back = [...document.querySelectorAll('.pane-choice:not(.is-unsupported)')].find(
+            (button) => button.dataset.routePane === firstPane && button.dataset.routeSession === firstSession
+          );
+          if (!back) return done({ error: '原 pane 按鈕不存在' });
+          back.click();
+          setTimeout(() => done({ value: document.querySelector('#message').value }), 100);
+        }, 100);
+      `,
+      args: [],
+    },
+  });
+  if (draftResult.error || (!draftResult.skipped && draftResult.value !== "pane A 尚未送出的草稿")) {
+    throw new Error(`Per-pane draft was not restored: ${JSON.stringify(draftResult)}`);
+  }
   await webdriver(`/session/${sessionId}/execute/sync`, {
     method: "POST",
     body: {
@@ -452,7 +485,19 @@ try {
     });
     if (noisyCardDetails) throw new Error("Queue card still exposes technical identity details");
     await webdriver(`/session/${sessionId}/element/${existingJob}/click`, { method: "POST", body: {} });
-    await find("#job-dialog[open] #job-dialog-message");
+    const existingEditor = await find("#job-dialog[open] #job-dialog-message");
+    await find("#job-dialog-scheduled-for");
+    const editable = !await webdriver(`/session/${sessionId}/element/${existingEditor}/property/readOnly`);
+    if (editable) {
+      const original = await webdriver(`/session/${sessionId}/element/${existingEditor}/property/value`);
+      await clearElement(existingEditor);
+      await sendKeys(existingEditor, `${original}\n背景刷新保留測試`);
+      await delay(4_500);
+      const preserved = await webdriver(`/session/${sessionId}/element/${existingEditor}/property/value`);
+      if (!preserved.endsWith("背景刷新保留測試")) {
+        throw new Error("Background refresh overwrote unsaved job edits");
+      }
+    }
     const closeJobDialog = await find("#close-job-dialog");
     await webdriver(`/session/${sessionId}/element/${closeJobDialog}/click`, { method: "POST", body: {} });
   }
@@ -592,7 +637,24 @@ try {
     const editor = await find("#job-dialog[open] #job-dialog-message");
     await clearElement(editor);
     await sendKeys(editor, "更新 後訊息");
-    const saveButton = await find("[data-job-action='save-message']");
+    const jobTime = await find("#job-dialog-scheduled-for");
+    const changedTime = await webdriver(`/session/${sessionId}/execute/sync`, {
+      method: "POST",
+      body: {
+        script: `
+          const date = new Date(Date.now() + 15 * 60_000);
+          date.setSeconds(0, 0);
+          const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+          const value = shifted.toISOString().slice(0, 16);
+          const input = document.querySelector('#job-dialog-scheduled-for');
+          input.value = value;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          return value;
+        `,
+        args: [],
+      },
+    });
+    const saveButton = await find("[data-job-action='save-job']");
     await webdriver(`/session/${sessionId}/element/${saveButton}/click`, {
       method: "POST",
       body: {},
@@ -600,6 +662,8 @@ try {
     await delay(250);
     const editedText = await webdriver(`/session/${sessionId}/element/${editor}/property/value`);
     if (editedText !== "更新 後訊息") throw new Error("Queue message edit did not persist");
+    const editedTime = await webdriver(`/session/${sessionId}/element/${jobTime}/property/value`);
+    if (editedTime !== changedTime) throw new Error("Queue send-time edit did not persist");
     const closeCreatedJob = await find("#close-job-dialog");
     await webdriver(`/session/${sessionId}/element/${closeCreatedJob}/click`, { method: "POST", body: {} });
   }

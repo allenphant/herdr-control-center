@@ -596,6 +596,36 @@ export async function createApplication({
         return updated;
       }
 
+      if (action === "edit-job" && ["scheduled", "deferred", "paused"].includes(job.status)) {
+        const message = cleanText(input.message, 8_000);
+        const scheduledFor = new Date(input.scheduledFor);
+        const currentScheduledFor = new Date(job.scheduledFor);
+        if (!message) throw new HttpError(400, "訊息內容不能空白");
+        if (Number.isNaN(scheduledFor.getTime())) {
+          throw new HttpError(400, "排程時間格式不正確");
+        }
+        const timeChanged = Math.floor(scheduledFor.getTime() / 60_000) !==
+          Math.floor(currentScheduledFor.getTime() / 60_000);
+        if (timeChanged && scheduledFor.getTime() < Date.now() - 5_000) {
+          throw new HttpError(400, "排程時間已經過去");
+        }
+        const timingUpdate = timeChanged ? {
+          scheduledFor: scheduledFor.toISOString(),
+          nextRunAt: scheduledFor.toISOString(),
+          retryUntil: new Date(
+            scheduledFor.getTime() + job.graceMinutes * 60_000,
+          ).toISOString(),
+          status: job.status === "deferred" ? "scheduled" : job.status,
+        } : {};
+        const updated = await store.updateJob(id, {
+          message,
+          ...timingUpdate,
+          lastOutcome: "訊息與傳送時間已更新",
+        });
+        await activeScheduler.record(updated, "edited", "訊息與傳送時間已更新");
+        return updated;
+      }
+
       if (action === "cancel" && ["scheduled", "deferred", "paused"].includes(job.status)) {
         const updated = await store.updateJob(id, {
           status: "canceled",

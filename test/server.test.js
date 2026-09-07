@@ -285,6 +285,39 @@ test("image attachments are stored locally and bound to the scheduled job", asyn
     const edited = await editResponse.json();
     assert.equal(editResponse.status, 200);
     assert.equal(edited.job.message, "更新後的訊息內容");
+
+    await store.updateJob(created.job.id, { status: "deferred" });
+    const changedTime = new Date(Date.now() + 10 * 60_000);
+    const editJobResponse = await fetch(`${baseUrl}/api/jobs/${created.job.id}/action`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "edit-job",
+        message: "連同傳送時間一起更新",
+        scheduledFor: changedTime.toISOString(),
+      }),
+    });
+    const editedJob = await editJobResponse.json();
+    assert.equal(editJobResponse.status, 200);
+    assert.equal(editedJob.job.message, "連同傳送時間一起更新");
+    assert.equal(editedJob.job.scheduledFor, changedTime.toISOString());
+    assert.equal(editedJob.job.nextRunAt, changedTime.toISOString());
+    assert.equal(editedJob.job.status, "scheduled");
+    assert.equal(
+      editedJob.job.retryUntil,
+      new Date(changedTime.getTime() + editedJob.job.graceMinutes * 60_000).toISOString(),
+    );
+
+    const pastResponse = await fetch(`${baseUrl}/api/jobs/${created.job.id}/action`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "edit-job",
+        message: "不應儲存",
+        scheduledFor: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    });
+    assert.equal(pastResponse.status, 400);
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });

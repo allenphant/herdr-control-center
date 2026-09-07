@@ -13,6 +13,7 @@ const ui = {
   jobDialogActions: document.querySelector("#job-dialog-actions"),
   jobDialogAttachments: document.querySelector("#job-dialog-attachments"),
   jobDialogMessage: document.querySelector("#job-dialog-message"),
+  jobDialogScheduledFor: document.querySelector("#job-dialog-scheduled-for"),
   jobDialogStatus: document.querySelector("#job-dialog-status"),
   jobDialogSummary: document.querySelector("#job-dialog-summary"),
   jobDialogTechnical: document.querySelector("#job-dialog-technical"),
@@ -96,7 +97,9 @@ const appState = {
   routeView: localStorage.getItem("pane-relay-route-view") ||
     (window.matchMedia("(max-width: 760px)").matches ? "list" : "space"),
   attachments: [],
+  drafts: new Map(),
   activeJobId: null,
+  jobDialogDirty: false,
   editingAlias: false,
   herdrFocus: new Map(),
   quota: null,
@@ -117,6 +120,8 @@ const PREVIEW_STALE_MS = 55_000;
 const LAYOUT_STALE_MS = 18_000;
 
 const ACTIVE_STATUSES = new Set(["scheduled", "deferred", "dispatching", "paused"]);
+const DEFAULT_MESSAGE = "請接續原本的工作，從目前進度繼續完成。完成後請整理結果與尚未解決的問題。";
+const DRAFT_STORAGE_PREFIX = "pane-relay-draft:v1:";
 const STATUS_TEXT = {
   blocked: "blocked",
   canceled: "已取消",
@@ -394,6 +399,92 @@ function toDateTimeLocal(date) {
   return shifted.toISOString().slice(0, 16);
 }
 
+function composerDraftKey(row = appState.selected) {
+  if (!row?.fingerprint) return null;
+  return [
+    row.sessionName,
+    row.pane.pane_id,
+    row.fingerprint.source,
+    row.fingerprint.value,
+  ].map(encodeURIComponent).join(":");
+}
+
+function composerValues() {
+  const form = new FormData(ui.scheduleForm);
+  return {
+    message: ui.message.value,
+    scheduledFor: ui.scheduledFor.value,
+    recurrence: String(form.get("recurrence") || "once"),
+    dispatchMode: String(form.get("dispatchMode") || "settled"),
+    graceMinutes: String(form.get("graceMinutes") || "360"),
+  };
+}
+
+function saveComposerDraft() {
+  const key = composerDraftKey();
+  if (!key) return;
+  const draft = {
+    ...composerValues(),
+    attachments: appState.attachments,
+    updatedAt: new Date().toISOString(),
+  };
+  appState.drafts.set(key, draft);
+  try {
+    sessionStorage.setItem(`${DRAFT_STORAGE_PREFIX}${key}`, JSON.stringify({
+      ...draft,
+      attachments: undefined,
+    }));
+  } catch {
+    // Draft persistence is best-effort; pane switching still works in memory.
+  }
+}
+
+function loadComposerDraft(row) {
+  const key = composerDraftKey(row);
+  let draft = key ? appState.drafts.get(key) : null;
+  if (!draft && key) {
+    try {
+      draft = JSON.parse(sessionStorage.getItem(`${DRAFT_STORAGE_PREFIX}${key}`) || "null");
+    } catch {
+      draft = null;
+    }
+  }
+  if (!draft) {
+    const date = new Date(Date.now() + 305 * 60_000);
+    date.setSeconds(0, 0);
+    draft = {
+      message: DEFAULT_MESSAGE,
+      scheduledFor: toDateTimeLocal(date),
+      recurrence: "once",
+      dispatchMode: "settled",
+      graceMinutes: "360",
+      attachments: [],
+    };
+  }
+  ui.message.value = draft.message ?? DEFAULT_MESSAGE;
+  ui.scheduledFor.value = draft.scheduledFor || "";
+  ui.scheduledFor.min = toDateTimeLocal(new Date());
+  ui.scheduleForm.elements.recurrence.value = draft.recurrence || "once";
+  const dispatchMode = ui.scheduleForm.elements.dispatchMode;
+  for (const option of dispatchMode) option.checked = option.value === (draft.dispatchMode || "settled");
+  ui.scheduleForm.elements.graceMinutes.value = draft.graceMinutes || "360";
+  appState.attachments = draft.attachments || [];
+  ui.attachmentInput.value = "";
+  updateMessageCount();
+  renderAttachments();
+}
+
+function deleteComposerDraft(row = appState.selected) {
+  const key = composerDraftKey(row);
+  if (!key) return;
+  appState.drafts.delete(key);
+  try {
+    sessionStorage.removeItem(`${DRAFT_STORAGE_PREFIX}${key}`);
+  } catch {
+    // Storage may be unavailable; the in-memory draft has still been removed.
+  }
+}
+
 function setServiceState(kind, text) {
   ui.serviceState.className = `service-state ${kind ? `is-${kind}` : ""}`.trim();
   ui.serviceState.lastElementChild.textContent = text;
@@ -439,6 +530,7 @@ function renderAttachments() {
           URL.revokeObjectURL(attachment.previewUrl);
           appState.attachments = appState.attachments.filter((item) => item.id !== attachment.id);
           renderAttachments();
+          saveComposerDraft();
         },
       },
     });
@@ -491,6 +583,7 @@ async function uploadPendingAttachments() {
       });
       attachment.uploaded = response.attachment;
       attachment.status = "ready";
+      saveComposerDraft();
       uploaded.push(response.attachment);
     } catch (error) {
       attachment.status = "error";
@@ -503,6 +596,7 @@ async function uploadPendingAttachments() {
 }
 
 function clearComposer() {
+  deleteComposerDraft();
   for (const attachment of appState.attachments) URL.revokeObjectURL(attachment.previewUrl);
   appState.attachments = [];
   appState.selected = null;
@@ -565,6 +659,7 @@ function reconcileSelection() {
       item.pane.pane_id === appState.selected.pane.pane_id,
   );
   if (!current || !sameFingerprint(current.fingerprint, appState.selected.fingerprint)) {
+    saveComposerDraft();
     appState.selected = null;
     renderTarget();
     toast("原本選取的 pane 或 agent session 已變更，請重新選擇", "error");
@@ -624,7 +719,9 @@ async function selectPaneRow(row) {
     const repaired = await repairPaneSession(row, { manual: true });
     if (!repaired) return;
   }
+  saveComposerDraft();
   appState.selected = row;
+  loadComposerDraft(row);
   renderRoutes();
   renderTarget();
   if (window.matchMedia("(max-width: 760px)").matches) {
@@ -1546,6 +1643,7 @@ function setDateAfterReset(value) {
   date.setMinutes(date.getMinutes() + 2, 0, 0);
   ui.scheduledFor.value = toDateTimeLocal(date);
   ui.scheduledFor.min = toDateTimeLocal(new Date());
+  saveComposerDraft();
   toast(`已設定為額度重置後 2 分鐘：${formatDate(date.toISOString())}`);
 }
 
@@ -1633,21 +1731,38 @@ function updateTriggerCountdowns() {
   }
 }
 
-async function saveJobMessage(job, textarea) {
+async function saveJobEdits(job, textarea, scheduledForInput) {
   const message = textarea.value.trim();
   if (!message) {
     toast("訊息內容不能空白", "error");
     textarea.focus();
     return;
   }
+  const scheduledFor = new Date(scheduledForInput.value);
+  const originalTime = new Date(job.scheduledFor);
+  const timeChanged = Math.floor(scheduledFor.getTime() / 60_000) !==
+    Math.floor(originalTime.getTime() / 60_000);
+  if (
+    Number.isNaN(scheduledFor.getTime()) ||
+    (timeChanged && scheduledFor.getTime() < Date.now() - 5_000)
+  ) {
+    toast("請設定未來的有效傳送時間", "error");
+    scheduledForInput.focus();
+    return;
+  }
   try {
     await requestJson(`/api/jobs/${encodeURIComponent(job.id)}/action`, {
       method: "POST",
-      body: JSON.stringify({ action: "edit-message", message }),
+      body: JSON.stringify({
+        action: "edit-job",
+        message,
+        scheduledFor: timeChanged ? scheduledFor.toISOString() : job.scheduledFor,
+      }),
     });
+    appState.jobDialogDirty = false;
     await loadState();
     renderJobDialog();
-    toast("佇列訊息已更新");
+    toast("訊息與傳送時間已更新");
   } catch (error) {
     toast(error.message, "error");
   }
@@ -1693,7 +1808,7 @@ function summaryItem(label, value) {
   ]);
 }
 
-function renderJobDialog() {
+function renderJobDialog({ preserveEdits = false } = {}) {
   const job = appState.jobs.find((item) => item.id === appState.activeJobId);
   if (!job) {
     if (ui.jobDialog.open) ui.jobDialog.close();
@@ -1705,9 +1820,14 @@ function renderJobDialog() {
   ui.jobDialogStatus.textContent = STATUS_TEXT[job.status] || job.status;
   ui.jobDialogStatus.dataset.status = job.status;
   ui.jobDialogTiming.textContent = `${jobStateExplanation(job)} · ${formatDate(timeValue)}`;
-  ui.jobDialogMessage.value = job.message;
+  if (!preserveEdits || !appState.jobDialogDirty) {
+    ui.jobDialogMessage.value = job.message;
+    ui.jobDialogScheduledFor.value = toDateTimeLocal(new Date(job.scheduledFor));
+  }
   ui.jobDialogMessage.readOnly = !editable;
   ui.jobDialogMessage.dataset.editable = String(editable);
+  ui.jobDialogScheduledFor.disabled = !editable;
+  ui.jobDialogScheduledFor.min = toDateTimeLocal(new Date());
   ui.jobDialogSummary.replaceChildren(
     summaryItem("執行方式", recurrenceLabel(job)),
     summaryItem("傳送條件", deliveryRuleLabel(job)),
@@ -1731,9 +1851,9 @@ function renderJobDialog() {
     ui.jobDialogActions.append(element("button", {
       className: "button button-primary",
       type: "button",
-      text: "儲存訊息",
-      dataset: { jobAction: "save-message" },
-      on: { click: () => void saveJobMessage(job, ui.jobDialogMessage) },
+      text: "儲存變更",
+      dataset: { jobAction: "save-job" },
+      on: { click: () => void saveJobEdits(job, ui.jobDialogMessage, ui.jobDialogScheduledFor) },
     }));
     if (job.status === "paused") {
       ui.jobDialogActions.append(jobActionButton("恢復排程", "resume", job));
@@ -1747,8 +1867,10 @@ function renderJobDialog() {
 
 function openJobDialog(job) {
   appState.activeJobId = job.id;
+  appState.jobDialogDirty = false;
   renderJobDialog();
   if (!ui.jobDialog.open) ui.jobDialog.showModal();
+  const editable = ["scheduled", "deferred", "paused"].includes(job.status);
   queueMicrotask(() => editable ? ui.jobDialogMessage.focus() : ui.closeJobDialog.focus());
 }
 
@@ -1878,7 +2000,7 @@ async function loadState() {
     if (JSON.stringify(jobs) !== JSON.stringify(appState.jobs)) {
       appState.jobs = jobs;
       renderJobs();
-      if (ui.jobDialog.open) renderJobDialog();
+      if (ui.jobDialog.open) renderJobDialog({ preserveEdits: true });
     }
     if (JSON.stringify(aliases) !== JSON.stringify(appState.aliases)) {
       appState.aliases = aliases;
@@ -2057,6 +2179,7 @@ function addAttachmentFiles(files, { clipboard = false } = {}) {
     added += 1;
   }
   renderAttachments();
+  saveComposerDraft();
   return added;
 }
 
@@ -2190,7 +2313,14 @@ function initializeQuotaFloat() {
 
 ui.scheduleForm.addEventListener("submit", submitSchedule);
 ui.sendImmediately.addEventListener("click", () => void confirmImmediateSend());
-ui.message.addEventListener("input", updateMessageCount);
+ui.message.addEventListener("input", () => {
+  updateMessageCount();
+  saveComposerDraft();
+});
+ui.scheduleForm.addEventListener("input", (event) => {
+  if (event.target !== ui.message) saveComposerDraft();
+});
+ui.scheduleForm.addEventListener("change", saveComposerDraft);
 ui.message.addEventListener("keydown", (event) => event.stopPropagation());
 ui.message.addEventListener("paste", (event) => {
   const files = [...(event.clipboardData?.items || [])]
@@ -2204,6 +2334,7 @@ ui.message.addEventListener("paste", (event) => {
   if (text) {
     ui.message.setRangeText(text, ui.message.selectionStart, ui.message.selectionEnd, "end");
     updateMessageCount();
+    saveComposerDraft();
   }
   const added = addAttachmentFiles(files, { clipboard: true });
   if (added) toast(`已從剪貼簿加入 ${added} 張圖片`);
@@ -2288,8 +2419,15 @@ ui.jobDialog.addEventListener("click", (event) => {
 });
 ui.jobDialog.addEventListener("close", () => {
   appState.activeJobId = null;
+  appState.jobDialogDirty = false;
 });
 ui.jobDialogMessage.addEventListener("keydown", (event) => event.stopPropagation());
+ui.jobDialogMessage.addEventListener("input", () => {
+  appState.jobDialogDirty = true;
+});
+ui.jobDialogScheduledFor.addEventListener("input", () => {
+  appState.jobDialogDirty = true;
+});
 document.addEventListener("pointerdown", (event) => {
   if (ui.paneSearchPopover.hidden) return;
   if (event.target.closest(".pane-search-control")) return;
@@ -2302,7 +2440,10 @@ document.addEventListener("keydown", (event) => {
   ui.quotaOrb.focus();
 });
 document.querySelectorAll("[data-offset-minutes]").forEach((button) => {
-  button.addEventListener("click", () => setDateOffset(Number(button.dataset.offsetMinutes)));
+  button.addEventListener("click", () => {
+    setDateOffset(Number(button.dataset.offsetMinutes));
+    saveComposerDraft();
+  });
 });
 
 document.querySelectorAll("[data-job-filter]").forEach((button) => {

@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#eff1ec" />
     <title>Pane Relay</title>
-    <link rel="stylesheet" href="/styles.css?v=20" />
-    <script type="module" src="/app.js?v=20"></script>
+    <link rel="stylesheet" href="/styles.css?v=21" />
+    <script type="module" src="/app.js?v=21"></script>
   </head>
   <body>
     <!--
@@ -168,7 +168,7 @@
             <label class="field-block">
               <span class="field-label">接續訊息</span>
               <textarea id="message" name="message" rows="6" maxlength="8000" required>請接續原本的工作，從目前進度繼續完成。完成後請整理結果與尚未解決的問題。</textarea>
-              <span class="field-help"><span id="message-count">0</span> / 8000 字</span>
+              <span class="field-help"><span id="message-count">0</span> / 8000 字 · 草稿依 pane 暫存在這個瀏覽器分頁</span>
             </label>
 
             <div class="attachment-field">
@@ -279,6 +279,11 @@
           <label class="field-block">
             <span class="field-label">接續訊息</span>
             <textarea id="job-dialog-message" rows="10" maxlength="8000"></textarea>
+          </label>
+          <label class="field-block job-dialog-time-field">
+            <span class="field-label">傳送時間</span>
+            <input id="job-dialog-scheduled-for" type="datetime-local" required />
+            <span class="field-help">重複排程會以這次設定的新時間作為後續週期基準。</span>
           </label>
           <div class="job-dialog-summary" id="job-dialog-summary"></div>
           <div class="job-dialog-attachments" id="job-dialog-attachments" hidden></div>

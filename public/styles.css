@@ -2673,6 +2673,16 @@ dialog::backdrop {
   cursor: default;
 }
 
+.job-dialog-time-field {
+  max-width: 360px;
+}
+
+#job-dialog-scheduled-for:disabled {
+  color: var(--ink-soft);
+  background: var(--surface-muted);
+  cursor: default;
+}
+
 .job-dialog-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
