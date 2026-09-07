@@ -1,3 +1,5 @@
+import { ConversationRequestState } from "./conversation-request-state.js";
+
 const ui = {
   attachmentInput: document.querySelector("#attachment-input"),
   attachmentList: document.querySelector("#attachment-list"),
@@ -16,8 +18,24 @@ const ui = {
   jobDialogTiming: document.querySelector("#job-dialog-timing"),
   jobDialogTitle: document.querySelector("#job-dialog-title"),
   closeJobDialog: document.querySelector("#close-job-dialog"),
+  closeConversationSearch: document.querySelector("#close-conversation-search"),
+  conversationAgent: document.querySelector("#conversation-agent"),
+  conversationContext: document.querySelector("#conversation-context"),
+  conversationContextMeta: document.querySelector("#conversation-context-meta"),
+  conversationDialog: document.querySelector("#conversation-dialog"),
+  conversationDialogSubtitle: document.querySelector("#conversation-dialog-subtitle"),
+  conversationLoadMore: document.querySelector("#conversation-load-more"),
+  conversationQuery: document.querySelector("#conversation-query"),
+  conversationResults: document.querySelector("#conversation-results"),
+  conversationResultCount: document.querySelector("#conversation-result-count"),
+  conversationRoleAssistant: document.querySelector("#conversation-role-assistant"),
+  conversationRoleUser: document.querySelector("#conversation-role-user"),
+  conversationSearchForm: document.querySelector("#conversation-search-form"),
+  conversationSearchStatus: document.querySelector("#conversation-search-status"),
+  conversationSearchSubmit: document.querySelector("#conversation-search-submit"),
   message: document.querySelector("#message"),
   messageCount: document.querySelector("#message-count"),
+  openConversationSearch: document.querySelector("#open-conversation-search"),
   paneFilter: document.querySelector("#pane-filter"),
   paneSearchPopover: document.querySelector("#pane-search-popover"),
   refreshTopology: document.querySelector("#refresh-topology"),
@@ -81,7 +99,14 @@ const appState = {
   editingAlias: false,
   herdrFocus: new Map(),
   quota: null,
+  conversationSearch: new ConversationRequestState(),
 };
+
+const SEARCHABLE_TRANSCRIPT_SOURCES = new Set([
+  "herdr:antigravity_cli",
+  "herdr:claude",
+  "herdr:codex",
+]);
 
 const visiblePreviewKeys = new Set();
 const visibleLayoutKeys = new Set();
@@ -1103,6 +1128,7 @@ function renderTarget() {
   if (!selected) {
     appState.editingAlias = false;
     ui.targetAliasForm.hidden = true;
+    ui.openConversationSearch.disabled = true;
     return;
   }
 
@@ -1125,11 +1151,227 @@ function renderTarget() {
   ui.targetPane.textContent = pane.pane_id;
   ui.targetAgent.textContent = pane.agent || "unknown";
   ui.targetFingerprint.textContent = shortFingerprint(selected.fingerprint);
+  const searchable = SEARCHABLE_TRANSCRIPT_SOURCES.has(selected.fingerprint?.source);
+  ui.openConversationSearch.disabled = !searchable;
+  ui.openConversationSearch.title = searchable
+    ? "搜尋這段 conversation 的完整可見訊息"
+    : "這個 agent transcript 尚未支援搜尋";
   const key = previewKey(selected.sessionName, pane.pane_id);
   ui.targetPreview.dataset.previewKey = key;
   ui.targetPreview.dataset.previewCompact = "true";
   renderPreviewNode(ui.targetPreview, key, true);
   void loadPanePreview(selected.sessionName, pane.pane_id);
+}
+
+function resetConversationSearch() {
+  appState.conversationSearch.cancelAll();
+  Object.assign(appState.conversationSearch, {
+    loading: false,
+    hits: [],
+    nextCursor: null,
+    revision: null,
+    activeAnchor: null,
+    context: [],
+    contextLoading: false,
+    error: null,
+  });
+}
+
+function appendHighlightedText(node, text, ranges = []) {
+  let offset = 0;
+  for (const range of ranges) {
+    if (range.start > offset) node.append(document.createTextNode(text.slice(offset, range.start)));
+    node.append(element("mark", { text: text.slice(range.start, range.end) }));
+    offset = range.end;
+  }
+  if (offset < text.length) node.append(document.createTextNode(text.slice(offset)));
+}
+
+function renderConversationContext() {
+  const state = appState.conversationSearch;
+  ui.conversationContext.replaceChildren();
+  if (state.contextLoading) {
+    ui.conversationContextMeta.textContent = "正在讀取前後文";
+    ui.conversationContext.append(element("div", {
+      className: "conversation-placeholder is-loading",
+      text: "讀取前後文…",
+    }));
+    return;
+  }
+  if (!state.activeAnchor || !state.context.length) {
+    ui.conversationContextMeta.textContent = "選擇一筆命中";
+    ui.conversationContext.append(element("div", { className: "conversation-placeholder" }, [
+      element("strong", { text: "先從左側選擇搜尋結果" }),
+      element("p", { text: "這裡會顯示該訊息前後的完整可見對話。" }),
+    ]));
+    return;
+  }
+  const active = state.context.find((message) => message.anchor === state.activeAnchor);
+  ui.conversationContextMeta.textContent = active
+    ? `已載入訊息 ${active.ordinal + 1} 的前後文`
+    : "前後文";
+  for (const message of state.context) {
+    ui.conversationContext.append(element("article", {
+      className: `conversation-message ${message.anchor === state.activeAnchor ? "is-active" : ""}`.trim(),
+      dataset: { role: message.role },
+    }, [
+      element("header", {}, [
+        element("strong", { text: message.role === "user" ? "User" : "Assistant" }),
+        element("span", { text: message.timestamp ? formatDate(message.timestamp, true) : `#${message.ordinal + 1}` }),
+      ]),
+      element("p", { text: message.text }),
+    ]));
+  }
+  requestAnimationFrame(() => {
+    ui.conversationContext.querySelector(".conversation-message.is-active")?.scrollIntoView({
+      block: "center",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+  });
+}
+
+function renderConversationSearch() {
+  const state = appState.conversationSearch;
+  ui.conversationResults.replaceChildren();
+  ui.conversationSearchSubmit.disabled = state.loading;
+  ui.conversationLoadMore.disabled = state.loading;
+  ui.conversationResults.setAttribute("aria-busy", String(state.loading));
+  ui.conversationSearchStatus.textContent = state.loading
+    ? state.hits.length ? "載入更多命中…" : "搜尋完整 conversation…"
+    : state.error || (state.revision
+      ? state.hits.length ? `已載入 ${state.hits.length} 筆命中` : "找不到符合的可見訊息"
+      : "輸入文字開始搜尋");
+  ui.conversationSearchStatus.classList.toggle("is-error", Boolean(state.error));
+  ui.conversationResultCount.textContent = state.revision
+    ? `${state.hits.length}${state.nextCursor ? "+" : ""} 筆`
+    : "尚未搜尋";
+
+  if (!state.hits.length) {
+    ui.conversationResults.append(element("div", { className: "conversation-placeholder" }, [
+      element("strong", { text: state.loading ? "正在建立搜尋結果" : state.error ? "搜尋未完成" : state.revision ? "沒有命中" : "等待搜尋" }),
+      element("p", { text: state.error || (state.revision ? "試試另一個詞，或調整訊息角色。" : "搜尋只包含 User 與 Assistant 看得到的文字。") }),
+    ]));
+  } else {
+    for (const hit of state.hits) {
+      const snippet = element("span", { className: "conversation-hit-snippet" });
+      appendHighlightedText(snippet, hit.snippet, hit.matchRanges);
+      ui.conversationResults.append(element("button", {
+        className: `conversation-hit ${hit.anchor === state.activeAnchor ? "is-active" : ""}`.trim(),
+        type: "button",
+        dataset: { anchor: hit.anchor, role: hit.role },
+        "aria-pressed": String(hit.anchor === state.activeAnchor),
+        on: { click: () => void loadConversationContext(hit.anchor) },
+      }, [
+        element("span", { className: "conversation-hit-meta" }, [
+          element("strong", { text: hit.role === "user" ? "User" : "Assistant" }),
+          element("span", { text: hit.timestamp ? formatDate(hit.timestamp, true) : `#${hit.ordinal + 1}` }),
+        ]),
+        snippet,
+      ]));
+    }
+  }
+  ui.conversationLoadMore.hidden = !state.nextCursor;
+  renderConversationContext();
+}
+
+function selectedConversationRequest(extra = {}) {
+  const selected = appState.selected;
+  if (!selected?.fingerprint) throw new Error("請重新選擇可驗證的 pane");
+  return {
+    sessionName: selected.sessionName,
+    paneId: selected.pane.pane_id,
+    expectedFingerprint: selected.fingerprint,
+    ...extra,
+  };
+}
+
+async function runConversationSearch({ append = false } = {}) {
+  const query = ui.conversationQuery.value.trim();
+  const roles = [
+    ui.conversationRoleUser.checked ? "user" : null,
+    ui.conversationRoleAssistant.checked ? "assistant" : null,
+  ].filter(Boolean);
+  if (!query || !roles.length) {
+    toast(!query ? "請輸入搜尋文字" : "至少選擇一種訊息角色", "error");
+    return;
+  }
+  const state = appState.conversationSearch;
+  const requestId = state.beginSearch({ replace: !append });
+  state.error = null;
+  if (!append) {
+    state.hits = [];
+    state.nextCursor = null;
+    state.revision = null;
+    state.activeAnchor = null;
+    state.context = [];
+  }
+  renderConversationSearch();
+  try {
+    const payload = await requestJson("/api/conversation/search", {
+      method: "POST",
+      body: JSON.stringify(selectedConversationRequest({
+        query,
+        roles,
+        limit: 30,
+        cursor: append ? state.nextCursor : null,
+      })),
+    });
+    if (requestId !== state.searchRequestId) return;
+    state.hits = append ? [...state.hits, ...payload.hits] : payload.hits;
+    state.nextCursor = payload.nextCursor;
+    state.revision = payload.revision;
+  } catch (error) {
+    if (requestId !== state.searchRequestId) return;
+    state.error = error.message;
+  } finally {
+    if (state.finishSearch(requestId)) {
+      renderConversationSearch();
+    }
+  }
+}
+
+async function loadConversationContext(anchor) {
+  const state = appState.conversationSearch;
+  const requestId = state.beginContext();
+  state.activeAnchor = anchor;
+  state.error = null;
+  renderConversationSearch();
+  try {
+    const payload = await requestJson("/api/conversation/context", {
+      method: "POST",
+      body: JSON.stringify(selectedConversationRequest({
+        anchor,
+        revision: state.revision,
+        before: 4,
+        after: 4,
+      })),
+    });
+    if (requestId !== state.contextRequestId) return;
+    state.context = payload.messages;
+  } catch (error) {
+    if (requestId !== state.contextRequestId) return;
+    state.error = error.message;
+    state.context = [];
+  } finally {
+    if (state.finishContext(requestId)) {
+      renderConversationSearch();
+    }
+  }
+}
+
+function openConversationSearch() {
+  const selected = appState.selected;
+  if (!selected || !SEARCHABLE_TRANSCRIPT_SOURCES.has(selected.fingerprint?.source)) return;
+  resetConversationSearch();
+  ui.conversationQuery.value = "";
+  ui.conversationRoleUser.checked = true;
+  ui.conversationRoleAssistant.checked = true;
+  ui.conversationAgent.textContent = agentName(selected.pane.agent);
+  ui.conversationAgent.dataset.agent = selected.pane.agent;
+  ui.conversationDialogSubtitle.textContent = `${paneDisplayName(selected.pane, selected.fingerprint)} · ${selected.pane.pane_id} · ${shortFingerprint(selected.fingerprint)}`;
+  renderConversationSearch();
+  ui.conversationDialog.showModal();
+  queueMicrotask(() => ui.conversationQuery.focus());
 }
 
 function formatQuotaPercent(value) {
@@ -2035,6 +2277,17 @@ ui.quotaBackdrop.addEventListener("click", () => {
 });
 ui.themeToggle.addEventListener("click", cycleTheme);
 ui.closeJobDialog.addEventListener("click", () => ui.jobDialog.close());
+ui.openConversationSearch.addEventListener("click", openConversationSearch);
+ui.closeConversationSearch.addEventListener("click", () => ui.conversationDialog.close());
+ui.conversationDialog.addEventListener("click", (event) => {
+  if (event.target === ui.conversationDialog) ui.conversationDialog.close();
+});
+ui.conversationSearchForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void runConversationSearch();
+});
+ui.conversationLoadMore.addEventListener("click", () => void runConversationSearch({ append: true }));
+ui.conversationQuery.addEventListener("keydown", (event) => event.stopPropagation());
 ui.jobDialog.addEventListener("click", (event) => {
   if (event.target === ui.jobDialog) ui.jobDialog.close();
 });

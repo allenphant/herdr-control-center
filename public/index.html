@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#eff1ec" />
     <title>Pane Relay</title>
-    <link rel="stylesheet" href="/styles.css?v=18" />
-    <script type="module" src="/app.js?v=18"></script>
+    <link rel="stylesheet" href="/styles.css?v=19" />
+    <script type="module" src="/app.js?v=19"></script>
   </head>
   <body>
     <!--
@@ -151,6 +151,16 @@
               <div><dt>對話指紋</dt><dd id="target-fingerprint"></dd></div>
             </dl>
             <div class="target-preview" id="target-preview" aria-label="選取 pane 的最近內容"></div>
+            <div class="target-conversation-action">
+              <div>
+                <strong>完整 conversation</strong>
+                <span>搜尋這個 agent session 的 user 與 assistant 訊息</span>
+              </div>
+              <button class="button button-quiet" id="open-conversation-search" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+                搜尋對話
+              </button>
+            </div>
           </div>
 
           <form id="schedule-form" class="schedule-form">
@@ -278,6 +288,63 @@
           </details>
         </div>
         <footer class="dialog-actions" id="job-dialog-actions"></footer>
+      </div>
+    </dialog>
+
+    <dialog class="conversation-dialog" id="conversation-dialog" aria-labelledby="conversation-dialog-title">
+      <div class="conversation-sheet">
+        <header class="dialog-heading conversation-heading">
+          <div>
+            <div class="dialog-title-line">
+              <h2 id="conversation-dialog-title">搜尋 conversation</h2>
+              <span class="agent-label" id="conversation-agent"></span>
+            </div>
+            <p id="conversation-dialog-subtitle">只讀取目前 pane 綁定的可見對話內容</p>
+          </div>
+          <button class="icon-button" id="close-conversation-search" type="button" aria-label="關閉對話搜尋" title="關閉">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </header>
+
+        <form class="conversation-searchbar" id="conversation-search-form" role="search">
+          <label class="conversation-query">
+            <span class="field-label">搜尋文字</span>
+            <span class="conversation-query-control">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+              <input id="conversation-query" type="search" maxlength="200" autocomplete="off" placeholder="輸入訊息中的文字" required />
+            </span>
+          </label>
+          <fieldset class="conversation-role-filters">
+            <legend>訊息角色</legend>
+            <label><input id="conversation-role-user" type="checkbox" checked />User</label>
+            <label><input id="conversation-role-assistant" type="checkbox" checked />Assistant</label>
+          </fieldset>
+          <button class="button button-primary" id="conversation-search-submit" type="submit">搜尋</button>
+        </form>
+
+        <div class="conversation-search-status" id="conversation-search-status" role="status" aria-live="polite">輸入文字開始搜尋</div>
+        <div class="conversation-workspace">
+          <section class="conversation-results-panel" aria-labelledby="conversation-results-title">
+            <div class="conversation-section-heading">
+              <h3 id="conversation-results-title">命中訊息</h3>
+              <span id="conversation-result-count">尚未搜尋</span>
+            </div>
+            <div class="conversation-results" id="conversation-results"></div>
+            <button class="button button-quiet conversation-load-more" id="conversation-load-more" type="button" hidden>載入更多</button>
+          </section>
+          <section class="conversation-context-panel" aria-labelledby="conversation-context-title">
+            <div class="conversation-section-heading">
+              <h3 id="conversation-context-title">前後文</h3>
+              <span id="conversation-context-meta" role="status" aria-live="polite">選擇一筆命中</span>
+            </div>
+            <div class="conversation-context" id="conversation-context" tabindex="0" aria-labelledby="conversation-context-title" aria-describedby="conversation-context-meta">
+              <div class="conversation-placeholder">
+                <strong>先從左側選擇搜尋結果</strong>
+                <p>這裡會顯示該訊息前後的完整可見對話。</p>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
     </dialog>
 

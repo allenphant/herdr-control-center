@@ -10,6 +10,7 @@ const screenshotPath = process.env.SCREENSHOT_PATH || "";
 const captureErrorState = process.env.CAPTURE_ERROR_STATE === "1";
 const captureJobDialog = process.env.CAPTURE_JOB_DIALOG === "1";
 const captureQuotaPanel = process.env.CAPTURE_QUOTA_PANEL === "1";
+const captureConversationSearch = process.env.CAPTURE_CONVERSATION_SEARCH === "1";
 const createJob = process.env.CREATE_JOB === "1";
 const testImagePath = process.env.TEST_IMAGE_PATH || "";
 const elementKey = "element-6066-11e4-a52e-4f735466cecf";
@@ -315,6 +316,88 @@ try {
   if (!fingerprint || fingerprint === "無法驗證") {
     throw new Error("Conversation fingerprint was not rendered");
   }
+  await webdriver(`/session/${sessionId}/execute/sync`, {
+    method: "POST",
+    body: {
+      script: `
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = (url, options = {}) => {
+          if (String(url).endsWith('/api/conversation/search') && options.method === 'POST') {
+            return Promise.resolve(new Response(JSON.stringify({
+              provider: 'codex',
+              conversationId: '00000000-0000-7000-8000-000000000020',
+              revision: 'browser-smoke-r1',
+              hits: [{
+                anchor: 'codex:item-a:0',
+                ordinal: 12,
+                role: 'assistant',
+                timestamp: '2026-01-02T03:04:05.000Z',
+                snippet: 'The visible needle is anchored to this message.',
+                matchRanges: [{ start: 12, end: 18 }]
+              }],
+              nextCursor: null
+            }), { status: 200, headers: { 'content-type': 'application/json' } }));
+          }
+          if (String(url).endsWith('/api/conversation/context') && options.method === 'POST') {
+            return Promise.resolve(new Response(JSON.stringify({
+              provider: 'codex',
+              conversationId: '00000000-0000-7000-8000-000000000020',
+              revision: 'browser-smoke-r1',
+              anchor: 'codex:item-a:0',
+              messages: [
+                { provider: 'codex', conversationId: 'x', anchor: 'codex:item-u:0', ordinal: 11, role: 'user', timestamp: '2026-01-02T03:04:00.000Z', text: 'Please locate the exact phrase.' },
+                { provider: 'codex', conversationId: 'x', anchor: 'codex:item-a:0', ordinal: 12, role: 'assistant', timestamp: '2026-01-02T03:04:05.000Z', text: 'The visible needle is anchored to this message.' }
+              ]
+            }), { status: 200, headers: { 'content-type': 'application/json' } }));
+          }
+          return originalFetch(url, options);
+        };
+        return true;
+      `,
+      args: [],
+    },
+  });
+  const conversationButton = await find("#open-conversation-search:not([disabled])");
+  await webdriver(`/session/${sessionId}/execute/sync`, {
+    method: "POST",
+    body: {
+      script: "arguments[0].scrollIntoView({ block: 'center', inline: 'nearest' }); return true;",
+      args: [{ [elementKey]: conversationButton }],
+    },
+  });
+  await webdriver(`/session/${sessionId}/element/${conversationButton}/click`, { method: "POST", body: {} });
+  await find("#conversation-dialog[open]");
+  const conversationQuery = await find("#conversation-query");
+  await sendKeys(conversationQuery, "needle");
+  const conversationSubmit = await find("#conversation-search-submit");
+  await webdriver(`/session/${sessionId}/element/${conversationSubmit}/click`, { method: "POST", body: {} });
+  const conversationHit = await find(".conversation-hit mark");
+  const highlighted = await webdriver(`/session/${sessionId}/element/${conversationHit}/text`);
+  if (highlighted !== "needle") throw new Error(`Conversation match was not highlighted: ${highlighted}`);
+  const hitButton = await find(".conversation-hit");
+  await webdriver(`/session/${sessionId}/element/${hitButton}/click`, { method: "POST", body: {} });
+  await find(".conversation-message.is-active");
+  const conversationBounds = await webdriver(`/session/${sessionId}/execute/sync`, {
+    method: "POST",
+    body: {
+      script: `
+        const dialog = document.querySelector('#conversation-dialog').getBoundingClientRect();
+        const results = document.querySelector('.conversation-results').getBoundingClientRect();
+        const context = document.querySelector('.conversation-context').getBoundingClientRect();
+        return {
+          withinViewport: dialog.left >= 0 && dialog.top >= 0 && dialog.right <= innerWidth && dialog.bottom <= innerHeight,
+          resultsHeight: results.height,
+          contextHeight: context.height
+        };
+      `,
+      args: [],
+    },
+  });
+  if (!conversationBounds.withinViewport || conversationBounds.resultsHeight < 80 || conversationBounds.contextHeight < 80) {
+    throw new Error(`Conversation workspace is not usable: ${JSON.stringify(conversationBounds)}`);
+  }
+  const closeConversation = await find("#close-conversation-search");
+  await webdriver(`/session/${sessionId}/element/${closeConversation}/click`, { method: "POST", body: {} });
   const selectedAgentElement = await find("#target-agent");
   const selectedAgent = await webdriver(`/session/${sessionId}/element/${selectedAgentElement}/text`);
   const immediateButton = await find("#send-immediately:not([disabled])");
@@ -542,6 +625,24 @@ try {
       const orb = await find("#quota-orb");
       await webdriver(`/session/${sessionId}/element/${orb}/click`, { method: "POST", body: {} });
       await find("#quota-panel:not([hidden])");
+    }
+    if (captureConversationSearch) {
+      const openSearch = await find("#open-conversation-search:not([disabled])");
+      await webdriver(`/session/${sessionId}/execute/sync`, {
+        method: "POST",
+        body: {
+          script: "arguments[0].scrollIntoView({ block: 'center', inline: 'nearest' }); return true;",
+          args: [{ [elementKey]: openSearch }],
+        },
+      });
+      await webdriver(`/session/${sessionId}/element/${openSearch}/click`, { method: "POST", body: {} });
+      const query = await find("#conversation-query");
+      await sendKeys(query, "needle");
+      const submit = await find("#conversation-search-submit");
+      await webdriver(`/session/${sessionId}/element/${submit}/click`, { method: "POST", body: {} });
+      const hit = await find(".conversation-hit");
+      await webdriver(`/session/${sessionId}/element/${hit}/click`, { method: "POST", body: {} });
+      await find(".conversation-message.is-active");
     }
     await webdriver(`/session/${sessionId}/execute/sync`, {
       method: "POST",

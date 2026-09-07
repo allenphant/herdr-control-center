@@ -1,0 +1,8 @@
+{"timestamp":"2026-01-02T00:00:00.000Z","type":"session_meta","payload":{"id":"00000000-0000-7000-8000-000000000020","timestamp":"2026-01-02T00:00:00.000Z","cwd":"/redacted/project","originator":"codex-tui","cli_version":"0.152.1","source":"cli"}}
+{"timestamp":"2026-01-02T00:00:00.100Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"hidden developer needle"}],"id":"dev_001"}}
+{"timestamp":"2026-01-02T00:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Original user asks for needle"}],"id":"item_u1"}}
+{"timestamp":"2026-01-02T00:00:01.100Z","type":"event_msg","payload":{"type":"user_message","message":"duplicate event needle"}}
+{"timestamp":"2026-01-02T00:00:02.000Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"hidden reasoning needle"}],"encrypted_content":"redacted","id":"reason_001"}}
+{"timestamp":"2026-01-02T00:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"Commentary finds needle"}],"id":"item_a1"}}
+{"timestamp":"2026-01-02T00:00:04.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec_command","input":"{\"cmd\":\"hidden needle\"}","call_id":"call_001","id":"tool_001"}}
+{"timestamp":"2026-01-02T00:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Original final answer"}],"id":"item_a2"}}

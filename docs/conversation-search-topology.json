@@ -1,0 +1,106 @@
+{
+  "project_title": "Herdr Current Conversation Search",
+  "nodes": [
+    {
+      "id": "pane_ui",
+      "type": "client",
+      "label": "Pane conversation search",
+      "description": "Search and navigate the conversation currently bound to a selected pane.",
+      "layer": "business",
+      "phase": "mvp",
+      "ai_instructions": "Do not combine this control with global pane metadata filtering."
+    },
+    {
+      "id": "loopback_api",
+      "type": "core_backend",
+      "label": "Fingerprint-verified API",
+      "description": "Validates the live Herdr occupant before search or context lookup.",
+      "layer": "logic",
+      "phase": "mvp",
+      "ai_instructions": "Accept session, pane, expected fingerprint, and search options; never accept a transcript path."
+    },
+    {
+      "id": "provider_adapters",
+      "type": "core_backend",
+      "label": "Transcript adapters",
+      "description": "Claude, Codex, and AGY adapters emit the same NormalizedMessage contract.",
+      "layer": "logic",
+      "phase": "mvp",
+      "ai_instructions": "Fail closed on unknown formats and exclude system, tool, and reasoning content."
+    },
+    {
+      "id": "memory_cache",
+      "type": "infra",
+      "label": "Append-aware LRU cache",
+      "description": "Caches normalized messages and ingests appended JSONL bytes.",
+      "layer": "infra",
+      "phase": "mvp",
+      "ai_instructions": "Bind cursors to transcript revisions and cap entry count."
+    },
+    {
+      "id": "native_transcripts",
+      "type": "database",
+      "label": "Native transcripts",
+      "description": "Read-only Claude JSONL, Codex rollout JSONL, and concise AGY transcript JSONL.",
+      "layer": "infra",
+      "phase": "mvp",
+      "ai_instructions": "Resolve only from fixed provider roots using the verified conversation UUID."
+    },
+    {
+      "id": "global_fts",
+      "type": "database",
+      "label": "Global FTS index",
+      "description": "Durable cross-conversation search and ranking.",
+      "layer": "infra",
+      "phase": "future",
+      "ai_instructions": "Do not introduce this dependency in Phase 1."
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_ui_api",
+      "source": "pane_ui",
+      "target": "loopback_api",
+      "action_label": "1. Search or open context",
+      "flow_type": "control",
+      "protocol": "Loopback HTTP JSON",
+      "payload": "Req: {sessionName,paneId,expectedFingerprint,query|anchor,roles,limit,cursor} -> Res: {revision,hits|messages,nextCursor}"
+    },
+    {
+      "id": "e_api_adapters",
+      "source": "loopback_api",
+      "target": "provider_adapters",
+      "action_label": "2. Load verified conversation",
+      "flow_type": "control",
+      "protocol": "In-process JavaScript call",
+      "payload": "{agent,source,value} -> {provider,conversationId,revision,messages}"
+    },
+    {
+      "id": "e_adapters_cache",
+      "source": "provider_adapters",
+      "target": "memory_cache",
+      "action_label": "3. Normalize and cache",
+      "flow_type": "data",
+      "protocol": "In-memory objects",
+      "payload": "NormalizedMessage[] keyed by provider and conversationId"
+    },
+    {
+      "id": "e_cache_native",
+      "source": "memory_cache",
+      "target": "native_transcripts",
+      "action_label": "4. Read new bytes",
+      "flow_type": "data",
+      "protocol": "Read-only filesystem JSONL",
+      "payload": "Fixed provider path(s), byte offsets, stat metadata"
+    },
+    {
+      "id": "e_future_fts",
+      "source": "provider_adapters",
+      "target": "global_fts",
+      "action_label": "Future durable indexing",
+      "flow_type": "data",
+      "protocol": "Deferred",
+      "payload": "NormalizedMessage documents"
+    }
+  ]
+}

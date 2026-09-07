@@ -9,6 +9,7 @@ import {
   fingerprintFromAgent,
   fingerprintsEqual,
 } from "./herdr-client.js";
+import { ConversationSearchService } from "./conversation-search.js";
 import { Scheduler } from "./scheduler.js";
 import { QuotaProvider } from "./quota-provider.js";
 import { resolvePaneSession, sameRepairCandidate } from "./session-repair.js";
@@ -141,6 +142,13 @@ function validatePaneValues(sessionValue, paneValue) {
   return { sessionName, paneId };
 }
 
+function rejectConversationOverrides(input) {
+  const forbidden = ["path", "transcriptPath", "provider"];
+  if (forbidden.some((key) => Object.hasOwn(input || {}, key))) {
+    throw new HttpError(400, "不得指定 transcript path 或 provider");
+  }
+}
+
 function normalizeRect(rect) {
   const normalized = {
     x: Number(rect?.x),
@@ -264,6 +272,7 @@ export async function createApplication({
   }),
   attachmentRoot = defaultAttachmentRoot,
   sessionResolver = resolvePaneSession,
+  conversationSearch = new ConversationSearchService(),
 } = {}) {
   await store.init();
   const activeScheduler = scheduler || new Scheduler({ client, store });
@@ -430,6 +439,28 @@ export async function createApplication({
       fingerprint,
       evidence: candidate.evidence,
     };
+  }
+
+  async function verifiedConversationFingerprint(input) {
+    const target = validatePaneValues(input?.sessionName, input?.paneId);
+    const expectedFingerprint = input?.expectedFingerprint;
+    if (
+      !expectedFingerprint
+      || typeof expectedFingerprint.agent !== "string"
+      || typeof expectedFingerprint.source !== "string"
+      || typeof expectedFingerprint.value !== "string"
+    ) {
+      throw new HttpError(400, "缺少可驗證的 conversation fingerprint");
+    }
+    const agent = await client.getAgent(target.sessionName, target.paneId);
+    const liveFingerprint = fingerprintFromAgent(agent);
+    if (!liveFingerprint) {
+      throw new HttpError(409, "這個 pane 沒有可驗證的 agent session，無法搜尋對話");
+    }
+    if (!fingerprintsEqual(expectedFingerprint, liveFingerprint)) {
+      throw new HttpError(409, "選取後 agent session 已變更，請重新選擇 pane 再搜尋");
+    }
+    return liveFingerprint;
   }
 
   async function createAttachment(input) {
@@ -649,6 +680,32 @@ export async function createApplication({
       return sendJson(response, 200, layout);
     }
 
+    if (request.method === "POST" && url.pathname === "/api/conversation/search") {
+      const body = await readJsonBody(request);
+      rejectConversationOverrides(body);
+      const fingerprint = await verifiedConversationFingerprint(body);
+      const input = {
+        query: body.query,
+        roles: body.roles,
+        limit: body.limit,
+        cursor: body.cursor,
+      };
+      return sendJson(response, 200, await conversationSearch.search(fingerprint, input));
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/conversation/context") {
+      const body = await readJsonBody(request);
+      rejectConversationOverrides(body);
+      const fingerprint = await verifiedConversationFingerprint(body);
+      const input = {
+        anchor: body.anchor,
+        revision: body.revision,
+        before: body.before,
+        after: body.after,
+      };
+      return sendJson(response, 200, await conversationSearch.context(fingerprint, input));
+    }
+
     if (request.method === "POST" && url.pathname === "/api/attachments") {
       const body = await readJsonBody(request, 12 * 1024 * 1024);
       const attachment = await createAttachment(body);
@@ -735,6 +792,7 @@ export async function createApplication({
     store,
     client,
     quotaProvider,
+    conversationSearch,
     listen(listenPort = port, listenHost = host) {
       activeScheduler.start();
       return new Promise((resolve, reject) => {

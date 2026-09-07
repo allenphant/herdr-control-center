@@ -7,6 +7,7 @@ The web console does not route by agent name alone. Every delivery is bound to t
 ## What is included
 
 - Spatial Herdr workspace, tab, and pane browser with live terminal previews
+- Current-conversation search for Claude, Codex, and AGY with role filters, highlighted matches, and surrounding context
 - Exact-pane continuation scheduling and immediate delivery with confirmation
 - Conversation fingerprint verification and fail-closed session repair
 - Message editing, image attachments, delivery countdowns, and recurring schedules
@@ -54,6 +55,7 @@ The installer creates and enables `pane-relay.service`, then adds a **Pane Relay
 - [Mobile and cross-device Herdr access](docs/mobile-access.md)
 - [Agent-to-agent communication exploration](docs/agent-communication.md)
 - [Cross-session data relay backlog proposal](docs/cross-session-data-relay-backlog.md)
+- [Conversation search contract, architecture, and backlog](docs/conversation-search-backlog.md)
 - [Sample Herdr configuration](config.toml.example)
 
 ## Security model

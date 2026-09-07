@@ -1,0 +1,13 @@
+{
+  "schema": "claude-jsonl-derived-synthetic-v1",
+  "query": "benchmark-needle",
+  "needleEvery": 113,
+  "searchLimit": 30,
+  "ordinaryMessageCount": 1200,
+  "largeMessageCount": 12000,
+  "thresholdsMs": {
+    "ordinaryCold": 300,
+    "largeCold": 1000,
+    "largeWarm": 50
+  }
+}

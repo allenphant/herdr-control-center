@@ -1615,6 +1615,48 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
+.target-conversation-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.target-conversation-action > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.target-conversation-action strong {
+  font-size: 0.76rem;
+}
+
+.target-conversation-action span {
+  color: var(--ink-faint);
+  font-size: 0.68rem;
+}
+
+.target-conversation-action .button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.target-conversation-action svg,
+.conversation-query-control svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.8;
+}
+
 .schedule-form {
   margin-top: 22px;
   padding-bottom: 8px;
@@ -2131,8 +2173,294 @@ dialog::backdrop {
   width: min(760px, calc(100vw - 32px));
 }
 
+.conversation-dialog {
+  width: min(1120px, calc(100vw - 32px));
+}
+
+.conversation-sheet {
+  display: grid;
+  height: min(820px, calc(100dvh - 32px));
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.conversation-heading .agent-label {
+  min-height: 21px;
+}
+
+.conversation-searchbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto auto;
+  align-items: end;
+  gap: 14px;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-raised);
+}
+
+.conversation-query {
+  display: grid;
+  gap: 6px;
+}
+
+.conversation-query-control {
+  position: relative;
+  display: block;
+}
+
+.conversation-query-control svg {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  color: var(--ink-faint);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.conversation-query-control input {
+  width: 100%;
+  padding-left: 38px;
+}
+
+.conversation-role-filters {
+  display: flex;
+  min-width: 0;
+  height: 42px;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.conversation-role-filters legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.conversation-role-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 680;
+  white-space: nowrap;
+}
+
+.conversation-role-filters input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.conversation-search-status {
+  min-height: 34px;
+  padding: 8px 22px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-soft);
+  background: var(--surface);
+  font-size: 0.72rem;
+}
+
+.conversation-search-status.is-error {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.conversation-workspace {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(300px, 0.78fr) minmax(0, 1.22fr);
+  gap: 1px;
+  background: var(--line);
+}
+
+.conversation-results-panel,
+.conversation-context-panel {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--surface);
+}
+
+.conversation-context-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.conversation-section-heading {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.conversation-section-heading h3 {
+  font-size: 0.78rem;
+}
+
+.conversation-section-heading span {
+  color: var(--ink-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.conversation-results,
+.conversation-context {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--line-strong) var(--surface);
+}
+
+.conversation-results {
+  padding: 8px;
+}
+
+.conversation-hit {
+  display: grid;
+  width: 100%;
+  gap: 6px;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+}
+
+.conversation-hit + .conversation-hit {
+  margin-top: 3px;
+}
+
+.conversation-hit:hover {
+  border-color: var(--line);
+  background: var(--surface-muted);
+}
+
+.conversation-hit.is-active {
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--line));
+  background: var(--accent-soft);
+}
+
+.conversation-hit-meta,
+.conversation-message header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.conversation-hit-meta strong,
+.conversation-message header strong {
+  color: var(--accent);
+  font-size: 0.72rem;
+}
+
+.conversation-hit[data-role="user"] .conversation-hit-meta strong,
+.conversation-message[data-role="user"] header strong {
+  color: var(--warning);
+}
+
+.conversation-hit-meta span,
+.conversation-message header span {
+  color: var(--ink-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.conversation-hit-snippet {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.48;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.conversation-hit mark {
+  border-radius: 7px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--warning-soft) 82%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--warning) 40%, transparent);
+}
+
+.conversation-load-more {
+  margin: 8px;
+}
+
+.conversation-context {
+  padding: 14px;
+  scroll-padding-block: 40%;
+}
+
+.conversation-message {
+  width: min(88%, 70ch);
+  padding: 11px 13px;
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.conversation-message + .conversation-message {
+  margin-top: 9px;
+}
+
+.conversation-message[data-role="assistant"] {
+  margin-right: auto;
+}
+
+.conversation-message[data-role="user"] {
+  margin-left: auto;
+  background: color-mix(in srgb, var(--warning-soft) 58%, var(--surface-raised));
+}
+
+.conversation-message.is-active {
+  outline: 2px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  outline-offset: 2px;
+}
+
+.conversation-message p {
+  margin-top: 6px;
+  font-size: 15px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.conversation-placeholder {
+  display: grid;
+  min-height: 150px;
+  place-content: center;
+  gap: 4px;
+  padding: 24px;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.conversation-placeholder strong {
+  color: var(--ink);
+  font-size: 0.76rem;
+}
+
+.conversation-placeholder p,
+.conversation-placeholder.is-loading {
+  font-size: 0.74rem;
+}
+
 .dialog-sheet,
-.confirm-sheet {
+.confirm-sheet,
+.conversation-sheet {
   overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-panel);
@@ -2435,6 +2763,36 @@ dialog::backdrop {
     width: calc(100vw - 20px);
   }
 
+  .conversation-dialog {
+    width: calc(100vw - 20px);
+  }
+
+  .conversation-sheet {
+    height: calc(100dvh - 20px);
+  }
+
+  .conversation-searchbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-inline: 16px;
+  }
+
+  .conversation-query {
+    grid-column: 1 / -1;
+  }
+
+  .conversation-search-status {
+    padding-inline: 16px;
+  }
+
+  .conversation-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(190px, 0.82fr) minmax(230px, 1.18fr);
+  }
+
+  .conversation-results-panel {
+    border-bottom: 1px solid var(--line);
+  }
+
   .dialog-body {
     max-height: 64dvh;
     padding-inline: 16px;
@@ -2463,6 +2821,15 @@ dialog::backdrop {
   .target-summary,
   .schedule-form {
     margin-inline: 16px;
+  }
+
+  .target-conversation-action {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .target-conversation-action .button {
+    justify-content: center;
   }
 
   .identity-grid,
@@ -2514,9 +2881,29 @@ dialog::backdrop {
   .topbar-actions .button,
   .queue-tabs button,
   .job-action,
-  .copy-fingerprint {
+  .copy-fingerprint,
+  .conversation-hit {
     min-height: 44px;
     padding-inline: 10px;
+  }
+
+  .conversation-searchbar {
+    grid-template-columns: 1fr;
+  }
+
+  .conversation-query,
+  .conversation-role-filters,
+  .conversation-searchbar .button {
+    grid-column: 1;
+  }
+
+  .conversation-role-filters,
+  .conversation-searchbar .button {
+    width: 100%;
+  }
+
+  .conversation-role-filters {
+    justify-content: space-around;
   }
 
   .panel-heading {
