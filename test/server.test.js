@@ -167,6 +167,32 @@ test("POST /api/jobs captures the live pane conversation fingerprint", async () 
     assert.equal(payload.job.paneId, "w1:p3");
     assert.equal(payload.job.expectedFingerprint.value, "conversation-123");
     assert.equal(app.store.snapshot().events[0].type, "scheduled");
+
+    const renameResponse = await fetch(`${baseUrl}/api/aliases`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionName: "default",
+        paneId: "w1:p3",
+        expectedFingerprint: agent.agent_session,
+        label: "Renamed Project",
+      }),
+    });
+    assert.equal(renameResponse.status, 200);
+    assert.equal(app.store.snapshot().jobs[0].label, "Renamed Project");
+
+    const clearRenameResponse = await fetch(`${baseUrl}/api/aliases`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionName: "default",
+        paneId: "w1:p3",
+        expectedFingerprint: agent.agent_session,
+        label: "",
+      }),
+    });
+    assert.equal(clearRenameResponse.status, 200);
+    assert.equal(app.store.snapshot().jobs[0].label, "Project");
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });
@@ -307,6 +333,29 @@ test("image attachments are stored locally and bound to the scheduled job", asyn
       editedJob.job.retryUntil,
       new Date(changedTime.getTime() + editedJob.job.graceMinutes * 60_000).toISOString(),
     );
+    const supplementalUpload = await fetch(`${baseUrl}/api/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "supplemental.png",
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      }),
+    });
+    const supplemental = await supplementalUpload.json();
+    const attachmentEditResponse = await fetch(`${baseUrl}/api/jobs/${created.job.id}/action`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "edit-job",
+        message: "連同補傳圖片一起更新",
+        scheduledFor: changedTime.toISOString(),
+        attachments: [editedJob.job.attachments[0], supplemental.attachment],
+      }),
+    });
+    const attachmentEdited = await attachmentEditResponse.json();
+    assert.equal(attachmentEditResponse.status, 200);
+    assert.equal(attachmentEdited.job.attachments.length, 2);
+    assert.equal(attachmentEdited.job.attachments[1].name, "supplemental.png");
 
     const pastResponse = await fetch(`${baseUrl}/api/jobs/${created.job.id}/action`, {
       method: "POST",

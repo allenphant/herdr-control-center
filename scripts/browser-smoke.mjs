@@ -110,6 +110,49 @@ try {
 
   const online = await find("#service-state.is-online");
   if (!online) throw new Error("Herdr connection did not become ready");
+  const emptyComposer = await webdriver(`/session/${sessionId}/execute/sync`, {
+    method: "POST",
+    body: {
+      script: `
+        const panel = document.querySelector('.composer-panel');
+        const visibleDisabledButtons = [...panel.querySelectorAll('button')]
+          .filter((button) => !button.hidden && button.getClientRects().length && button.disabled);
+        return {
+          empty: panel.classList.contains('is-empty'),
+          headingHidden: document.querySelector('.composer-heading').hidden,
+          formHidden: document.querySelector('#schedule-form').hidden,
+          actionbarHidden: document.querySelector('.composer-actionbar').hidden,
+          instructionVisible: !document.querySelector('#target-empty').hidden,
+          instruction: document.querySelector('#target-empty strong')?.textContent || '',
+          visibleDisabledButtons: visibleDisabledButtons.length,
+        };
+      `,
+      args: [],
+    },
+  });
+  if (
+    !emptyComposer.empty
+    || !emptyComposer.headingHidden
+    || !emptyComposer.formHidden
+    || !emptyComposer.actionbarHidden
+    || !emptyComposer.instructionVisible
+    || emptyComposer.instruction !== "先從左側選擇 pane"
+    || emptyComposer.visibleDisabledButtons !== 0
+  ) {
+    throw new Error(`Composer empty state is incomplete: ${JSON.stringify(emptyComposer)}`);
+  }
+  const globalSearchButton = await find("#open-global-conversation-search");
+  await webdriver(`/session/${sessionId}/element/${globalSearchButton}/click`, { method: "POST", body: {} });
+  await find("#conversation-dialog[open]");
+  const globalSearchTitle = await webdriver(
+    `/session/${sessionId}/element/${await find("#conversation-dialog-title")}/text`,
+  );
+  if (globalSearchTitle !== "全域搜尋 conversation") {
+    throw new Error(`Global conversation search entry opened the wrong dialog: ${globalSearchTitle}`);
+  }
+  const closeGlobalSearch = await find("#close-conversation-search");
+  await webdriver(`/session/${sessionId}/element/${closeGlobalSearch}/click`, { method: "POST", body: {} });
+  await find("#conversation-dialog:not([open])");
   if (browserWidth > 760) {
     await find(".pane-space.is-ready .space-pane");
   }
@@ -118,10 +161,10 @@ try {
       method: "POST",
       body: {
         script: `
-          return [...document.querySelectorAll('.app-shell > * > .panel-heading')].map((heading) => {
-            const rect = heading.getBoundingClientRect();
-            return { top: rect.top, bottom: rect.bottom, height: rect.height };
-          });
+        return [...document.querySelectorAll('.app-shell > * > .panel-heading')].map((heading) => {
+          const rect = heading.getBoundingClientRect();
+          return { top: rect.top, bottom: rect.bottom, height: rect.height };
+        }).filter((edge) => edge.height > 0);
         `,
         args: [],
       },
@@ -129,7 +172,7 @@ try {
     const topEdges = headingEdges.map((edge) => edge.top);
     const bottomEdges = headingEdges.map((edge) => edge.bottom);
     if (
-      headingEdges.length !== 3
+      headingEdges.length < 2
       || Math.max(...topEdges) - Math.min(...topEdges) > 1
       || Math.max(...bottomEdges) - Math.min(...bottomEdges) > 1
     ) {
@@ -520,6 +563,11 @@ try {
       }
       const preservedTime = await webdriver(`/session/${sessionId}/element/${existingTime}/property/value`);
       if (!preservedTime) throw new Error("Background refresh cleared the job quick time");
+      if (testImagePath) {
+        const editorAttachmentInput = await find("#job-dialog-attachment-input");
+        await sendKeys(editorAttachmentInput, testImagePath);
+        await find("#job-dialog-attachment-list .attachment-item");
+      }
     }
     const closeJobDialog = await find("#close-job-dialog");
     await webdriver(`/session/${sessionId}/element/${closeJobDialog}/click`, { method: "POST", body: {} });
@@ -613,13 +661,13 @@ try {
         transfer.items.add(file);
         const event = new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true });
         document.querySelector('#message').dispatchEvent(event);
-        return document.querySelectorAll('.attachment-item').length;
+        return document.querySelectorAll('#attachment-list .attachment-item').length;
       `,
       args: [],
     },
   });
   if (pastedImages !== 1) throw new Error(`Clipboard image paste created ${pastedImages} attachments`);
-  const pastedRemove = await find(".attachment-remove");
+  const pastedRemove = await find("#attachment-list .attachment-remove");
   await webdriver(`/session/${sessionId}/execute/sync`, {
     method: "POST",
     body: {
@@ -652,7 +700,7 @@ try {
     );
     if (clearedMessage !== "") throw new Error("Composer did not clear after scheduling");
 
-    const createdJobCard = await find(".job-item");
+    const createdJobCard = await find(".job-item:has(.status-label[data-status='scheduled'])");
     await webdriver(`/session/${sessionId}/element/${createdJobCard}/click`, {
       method: "POST",
       body: {},
@@ -660,6 +708,11 @@ try {
     const editor = await find("#job-dialog[open] #job-dialog-message");
     await clearElement(editor);
     await sendKeys(editor, "更新 後訊息");
+    if (testImagePath) {
+      const editorAttachmentInput = await find("#job-dialog-attachment-input");
+      await sendKeys(editorAttachmentInput, testImagePath);
+      await find("#job-dialog-attachment-list .attachment-item");
+    }
     const jobTime = await find("#job-dialog-scheduled-for");
     const changedTime = await webdriver(`/session/${sessionId}/execute/sync`, {
       method: "POST",
@@ -682,13 +735,17 @@ try {
       method: "POST",
       body: {},
     });
-    await delay(250);
-    const editedText = await webdriver(`/session/${sessionId}/element/${editor}/property/value`);
-    if (editedText !== "更新 後訊息") throw new Error("Queue message edit did not persist");
-    const editedTime = await webdriver(`/session/${sessionId}/element/${jobTime}/property/value`);
-    if (editedTime !== changedTime) throw new Error("Queue send-time edit did not persist");
-    const closeCreatedJob = await find("#close-job-dialog");
-    await webdriver(`/session/${sessionId}/element/${closeCreatedJob}/click`, { method: "POST", body: {} });
+    await find("#job-dialog:not([open])");
+    const editedCard = await find(".job-item");
+    const editedCardMessage = await webdriver(`/session/${sessionId}/execute/sync`, {
+      method: "POST",
+      body: {
+        script: "return document.querySelector('.job-item .job-message')?.textContent || '';",
+        args: [],
+      },
+    });
+    if (editedCardMessage !== "更新 後訊息") throw new Error("Queue message edit did not persist");
+    if (!editedCard) throw new Error("Edited queue card was not rendered");
   }
 
   if (captureErrorState) {

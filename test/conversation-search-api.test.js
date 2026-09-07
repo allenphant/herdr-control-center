@@ -29,6 +29,10 @@ async function withApp(run) {
       calls.push({ method: "search", actual, input });
       return { provider: "codex", conversationId: actual.value, revision: "r1", hits: [], nextCursor: null };
     },
+    async searchAll(input) {
+      calls.push({ method: "searchAll", input });
+      return { provider: "all", revision: "global-r1", hits: [], nextCursor: null };
+    },
     async context(actual, input) {
       calls.push({ method: "context", actual, input });
       return { provider: "codex", conversationId: actual.value, revision: "r1", messages: [] };
@@ -68,6 +72,45 @@ test("conversation search API revalidates the live fingerprint and does not need
       roles: undefined,
       limit: undefined,
       cursor: undefined,
+    });
+  });
+});
+
+test("global conversation API searches history without a live pane", async () => {
+  await withApp(async ({ baseUrl, calls }) => {
+    const searchResponse = await fetch(`${baseUrl}/api/conversation/global-search`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: "old needle", agent: "all", roles: ["user"] }),
+    });
+    assert.equal(searchResponse.status, 200);
+    assert.deepEqual(calls[0], {
+      method: "searchAll",
+      input: {
+        query: "old needle",
+        roles: ["user"],
+        provider: "all",
+        limit: undefined,
+        cursor: undefined,
+      },
+    });
+
+    const contextResponse = await fetch(`${baseUrl}/api/conversation/global-context`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        fingerprint: { ...fingerprint, value: "00000000-0000-7000-8000-000000000021" },
+        anchor: "codex:item_a1:0",
+        revision: "r1",
+      }),
+    });
+    assert.equal(contextResponse.status, 200);
+    assert.equal(calls[1].method, "context");
+    assert.deepEqual(calls[1].actual, {
+      agent: "codex",
+      source: "herdr:codex",
+      value: "00000000-0000-7000-8000-000000000021",
+      kind: "id",
     });
   });
 });

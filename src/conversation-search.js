@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, open, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -85,6 +85,37 @@ function materializeProvider(provider, state) {
   return materializeAgyMessages(state);
 }
 
+function fingerprintForProvider(provider, conversationId) {
+  const entry = Object.entries(PROVIDERS).find(([, value]) => value.provider === provider);
+  if (!entry) throw new TranscriptError(422, "這個 agent transcript 尚未支援搜尋");
+  return {
+    agent: entry[1].agent,
+    kind: "id",
+    source: entry[0],
+    value: conversationId,
+  };
+}
+
+function globalLocationLabel(provider, filePath, root) {
+  const relative = path.relative(root, filePath).split(path.sep).filter(Boolean);
+  if (provider === "claude") return relative[0] || "Claude history";
+  if (provider === "codex") return relative.slice(0, -1).join("/") || "Codex history";
+  return "AGY history";
+}
+
+function sourceSignaturesEqual(left = [], right = []) {
+  if (left.length !== right.length) return false;
+  return left.every((source, index) =>
+    source.relativePath === right[index].relativePath
+      && source.size === right[index].size
+      && source.mtimeMs === right[index].mtimeMs,
+  );
+}
+
+function candidateSignature(candidate) {
+  return `${candidate.provider}:${candidate.conversationId}:${JSON.stringify(candidate.signatures)}`;
+}
+
 function revisionFor(provider, conversationId, sources) {
   const hash = createHash("sha256");
   hash.update(`conversation-search-v1\0${provider}\0${conversationId}\0`);
@@ -96,12 +127,21 @@ function revisionFor(provider, conversationId, sources) {
 }
 
 export class TranscriptRepository {
-  constructor({ homeDirectory = os.homedir(), maxEntries = 12, discoveryTtlMs = 2_000 } = {}) {
+  constructor({
+    homeDirectory = os.homedir(),
+    maxEntries = 12,
+    discoveryTtlMs = 2_000,
+    indexPath = path.join(homeDirectory, ".cache", "herdr-control-center", "conversation-index.json"),
+  } = {}) {
     this.homeDirectory = homeDirectory;
     this.maxEntries = Math.max(1, maxEntries);
     this.discoveryTtlMs = Math.max(0, discoveryTtlMs);
     this.cache = new Map();
     this.locations = new Map();
+    this.allLocations = null;
+    this.indexPath = indexPath;
+    this.globalIndexPromise = null;
+    this.globalIndex = null;
   }
 
   async locate(provider, conversationId, force = false) {
@@ -137,6 +177,195 @@ export class TranscriptRepository {
     paths.sort();
     this.locations.set(key, { discoveredAt: Date.now(), paths });
     return paths;
+  }
+
+  async listConversations(force = false) {
+    if (
+      !force &&
+      this.allLocations &&
+      Date.now() - this.allLocations.discoveredAt < this.discoveryTtlMs
+    ) {
+      return this.allLocations.items;
+    }
+
+    const conversations = new Map();
+    const add = async (provider, conversationId, filePath, root) => {
+      try {
+        assertConversationId(conversationId);
+        const info = await lstat(filePath);
+        if (!info.isFile() || info.isSymbolicLink()) return;
+        const key = `${provider}:${conversationId}`;
+        const existing = conversations.get(key) || {
+          provider,
+          conversationId,
+          fingerprint: fingerprintForProvider(provider, conversationId),
+          updatedAtMs: 0,
+          size: 0,
+          locations: new Set(),
+          signatures: [],
+        };
+        existing.updatedAtMs = Math.max(existing.updatedAtMs, info.mtimeMs);
+        existing.size += info.size;
+        existing.locations.add(globalLocationLabel(provider, filePath, root));
+        existing.signatures.push({
+          relativePath: path.relative(root, filePath),
+          size: info.size,
+          mtimeMs: info.mtimeMs,
+        });
+        conversations.set(key, existing);
+      } catch {
+        // One malformed or disappearing history file must not hide other conversations.
+      }
+    };
+
+    const claudeRoot = path.join(this.homeDirectory, ".claude", "projects");
+    const claudeProjects = await readdir(claudeRoot, { withFileTypes: true }).catch(() => []);
+    for (const project of claudeProjects) {
+      if (!project.isDirectory()) continue;
+      const projectRoot = path.join(claudeRoot, project.name);
+      const files = await readdir(projectRoot, { withFileTypes: true }).catch(() => []);
+      for (const file of files) {
+        if (!file.isFile() || !file.name.endsWith(".jsonl")) continue;
+        await add("claude", file.name.slice(0, -6), path.join(projectRoot, file.name), claudeRoot);
+      }
+    }
+
+    const codexRoot = path.join(this.homeDirectory, ".codex", "sessions");
+    const codexFiles = await walkFiles(codexRoot, (name) => name.endsWith(".jsonl"));
+    for (const filePath of codexFiles) {
+      const match = path.basename(filePath).match(
+        /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i,
+      );
+      if (match) await add("codex", match[1], filePath, codexRoot);
+    }
+
+    const agyRoot = path.join(this.homeDirectory, ".gemini", "antigravity-cli", "brain");
+    const agyConversations = await readdir(agyRoot, { withFileTypes: true }).catch(() => []);
+    for (const conversation of agyConversations) {
+      if (!conversation.isDirectory()) continue;
+      const conversationId = conversation.name;
+      const filePath = path.join(
+        agyRoot,
+        conversationId,
+        ".system_generated",
+        "logs",
+        "transcript.jsonl",
+      );
+      await add("agy", conversationId, filePath, agyRoot);
+    }
+
+    const items = [...conversations.values()]
+      .map((item) => ({
+        ...item,
+        locations: [...item.locations].sort(),
+        signatures: item.signatures.sort((left, right) => left.relativePath.localeCompare(right.relativePath)),
+        updatedAt: item.updatedAtMs ? new Date(item.updatedAtMs).toISOString() : null,
+      }))
+      .sort((left, right) => right.updatedAtMs - left.updatedAtMs || left.conversationId.localeCompare(right.conversationId));
+    this.allLocations = { discoveredAt: Date.now(), items };
+    return items;
+  }
+
+  async readGlobalIndex() {
+    try {
+      const parsed = JSON.parse(await readFile(this.indexPath, "utf8"));
+      if (parsed?.version !== 1 || !Array.isArray(parsed.conversations)) return new Map();
+      return new Map(parsed.conversations
+        .filter((item) => item?.key)
+        .map((item) => [item.key, item]));
+    } catch {
+      return new Map();
+    }
+  }
+
+  async writeGlobalIndex(items, skippedItems = []) {
+    const directory = path.dirname(this.indexPath);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const temporaryPath = `${this.indexPath}.${process.pid}.${Date.now()}.tmp`;
+    const payload = {
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      conversations: [
+        ...items.map((item) => ({
+          key: `${item.provider}:${item.conversationId}`,
+          sourceSignatures: item.signatures,
+          conversation: item.conversation,
+        })),
+        ...skippedItems,
+      ],
+    };
+    try {
+      await writeFile(temporaryPath, `${JSON.stringify(payload)}\n`, { mode: 0o600, flag: "wx" });
+      await rename(temporaryPath, this.indexPath);
+    } catch (error) {
+      await rename(temporaryPath, `${temporaryPath}.failed`).catch(() => {});
+      throw error;
+    }
+  }
+
+  async buildGlobalIndex() {
+    if (this.globalIndexPromise) return this.globalIndexPromise;
+    this.globalIndexPromise = (async () => {
+      const candidates = await this.listConversations(true);
+      const currentSignatures = candidates.map(candidateSignature).sort();
+      if (
+        this.globalIndex &&
+        this.globalIndex.signatures.length === currentSignatures.length &&
+        this.globalIndex.signatures.every((signature, index) => signature === currentSignatures[index])
+      ) {
+        return this.globalIndex;
+      }
+      const stored = await this.readGlobalIndex();
+      const indexed = [];
+      const skippedItems = [];
+      let skipped = 0;
+      let changed = stored.size !== candidates.length;
+
+      for (const candidate of candidates) {
+        const key = `${candidate.provider}:${candidate.conversationId}`;
+        const cached = stored.get(key);
+        if (cached && sourceSignaturesEqual(cached.sourceSignatures, candidate.signatures)) {
+          if (cached.status === "skipped") {
+            skipped += 1;
+            skippedItems.push(cached);
+            continue;
+          }
+          if (!cached.conversation) {
+            changed = true;
+            continue;
+          }
+          indexed.push({
+            ...candidate,
+            conversation: cached.conversation,
+          });
+          continue;
+        }
+        try {
+          const conversation = await this.load(candidate.fingerprint);
+          indexed.push({ ...candidate, conversation });
+          changed = true;
+        } catch {
+          skipped += 1;
+          skippedItems.push({
+            key,
+            status: "skipped",
+            sourceSignatures: candidate.signatures,
+          });
+          changed = true;
+        }
+      }
+
+      if (changed || !stored.size) {
+        await this.writeGlobalIndex(indexed, skippedItems).catch(() => {});
+      }
+      this.globalIndex = { items: indexed, skipped, signatures: currentSignatures };
+      return this.globalIndex;
+    })();
+    try {
+      return await this.globalIndexPromise;
+    } finally {
+      this.globalIndexPromise = null;
+    }
   }
 
   touch(key, entry) {
@@ -292,6 +521,29 @@ function normalizeRoles(value) {
   return roles.sort();
 }
 
+function normalizeLimit(value) {
+  const limit = value === undefined ? 20 : Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new TranscriptError(400, "搜尋 limit 必須介於 1 到 100");
+  }
+  return limit;
+}
+
+function matchedMessages(conversation, query, roles) {
+  return conversation.messages.flatMap((message) => {
+    if (!roles.includes(message.role)) return [];
+    const ranges = matchRanges(message.text, query);
+    if (!ranges.length) return [];
+    return [{
+      anchor: message.anchor,
+      ordinal: message.ordinal,
+      role: message.role,
+      timestamp: message.timestamp,
+      ...snippetFor(message.text, ranges),
+    }];
+  });
+}
+
 export class ConversationSearchService {
   constructor({ repository = new TranscriptRepository() } = {}) {
     this.repository = repository;
@@ -303,28 +555,14 @@ export class ConversationSearchService {
       throw new TranscriptError(400, "搜尋文字必須為 1 到 200 個字元");
     }
     const roles = normalizeRoles(input.roles);
-    const limit = input.limit === undefined ? 20 : Number(input.limit);
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-      throw new TranscriptError(400, "搜尋 limit 必須介於 1 到 100");
-    }
+    const limit = normalizeLimit(input.limit);
     const conversation = await this.repository.load(fingerprint);
     const cursor = decodeCursor(input.cursor);
     const hash = queryHash(query, roles);
     if (cursor && (cursor.revision !== conversation.revision || cursor.queryHash !== hash)) {
       throw new TranscriptError(409, "Transcript 已更新或搜尋條件已改變，請重新搜尋");
     }
-    const matched = conversation.messages.flatMap((message) => {
-      if (!roles.includes(message.role)) return [];
-      const ranges = matchRanges(message.text, query);
-      if (!ranges.length) return [];
-      return [{
-        anchor: message.anchor,
-        ordinal: message.ordinal,
-        role: message.role,
-        timestamp: message.timestamp,
-        ...snippetFor(message.text, ranges),
-      }];
-    });
+    const matched = matchedMessages(conversation, query, roles);
     const offset = cursor?.offset || 0;
     const hits = matched.slice(offset, offset + limit);
     const nextOffset = offset + hits.length;
@@ -338,6 +576,86 @@ export class ConversationSearchService {
       query,
       hits,
       nextCursor,
+    };
+  }
+
+  async searchAll(input = {}) {
+    const query = typeof input.query === "string" ? input.query.trim() : "";
+    if (!query || query.length > 200) {
+      throw new TranscriptError(400, "搜尋文字必須為 1 到 200 個字元");
+    }
+    const roles = normalizeRoles(input.roles);
+    const limit = normalizeLimit(input.limit);
+    const provider = input.provider === undefined || input.provider === "all"
+      ? null
+      : input.provider;
+    if (provider && !["agy", "claude", "codex"].includes(provider)) {
+      throw new TranscriptError(400, "搜尋 agent 格式不正確");
+    }
+
+    const indexed = this.repository.buildGlobalIndex
+      ? await this.repository.buildGlobalIndex()
+      : { items: await this.repository.listConversations(), skipped: 0 };
+    const candidates = indexed.items.filter((item) => !provider || item.provider === provider);
+    const globalHash = queryHash(`${provider || "all"}\0${query}`, roles);
+    const globalRevisionHash = createHash("sha256");
+    for (const candidate of candidates) {
+      globalRevisionHash.update(
+        `${candidate.provider}\0${candidate.conversationId}\0${candidate.updatedAtMs}\0${candidate.size}\0`,
+      );
+    }
+    const revision = globalRevisionHash.digest("hex");
+    const cursor = decodeCursor(input.cursor);
+    if (cursor && (cursor.revision !== revision || cursor.queryHash !== globalHash)) {
+      throw new TranscriptError(409, "歷史 transcript 已更新或搜尋條件已改變，請重新搜尋");
+    }
+
+    const matches = [];
+    let skipped = indexed.skipped || 0;
+    let nextCandidate = 0;
+    const workerCount = Math.min(8, candidates.length);
+    const searchWorker = async () => {
+      while (nextCandidate < candidates.length) {
+        const candidate = candidates[nextCandidate];
+        nextCandidate += 1;
+        try {
+        const conversation = candidate.conversation || await this.repository.load(candidate.fingerprint);
+          for (const hit of matchedMessages(conversation, query, roles)) {
+            matches.push({
+              ...hit,
+              agent: candidate.fingerprint.agent,
+              conversationId: candidate.conversationId,
+              fingerprint: candidate.fingerprint,
+              locations: candidate.locations,
+              conversationUpdatedAt: candidate.updatedAt,
+              conversationRevision: conversation.revision,
+            });
+          }
+        } catch {
+          skipped += 1;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: workerCount }, () => searchWorker()));
+    matches.sort((left, right) => {
+      const leftTime = Date.parse(left.timestamp || left.conversationUpdatedAt || "") || 0;
+      const rightTime = Date.parse(right.timestamp || right.conversationUpdatedAt || "") || 0;
+      return rightTime - leftTime || left.conversationId.localeCompare(right.conversationId);
+    });
+
+    const offset = cursor?.offset || 0;
+    const hits = matches.slice(offset, offset + limit);
+    const nextOffset = offset + hits.length;
+    return {
+      provider: provider || "all",
+      query,
+      revision,
+      hits,
+      nextCursor: nextOffset < matches.length
+        ? encodeCursor({ v: 1, revision, queryHash: globalHash, offset: nextOffset })
+        : null,
+      conversationsScanned: candidates.length,
+      skipped,
     };
   }
 

@@ -149,6 +149,24 @@ function rejectConversationOverrides(input) {
   }
 }
 
+function validateHistoricalFingerprint(input) {
+  const fingerprint = input?.fingerprint;
+  if (
+    !fingerprint ||
+    typeof fingerprint.agent !== "string" ||
+    typeof fingerprint.source !== "string" ||
+    typeof fingerprint.value !== "string"
+  ) {
+    throw new HttpError(400, "缺少有效的歷史 conversation fingerprint");
+  }
+  return {
+    agent: fingerprint.agent,
+    kind: typeof fingerprint.kind === "string" ? fingerprint.kind : "id",
+    source: fingerprint.source,
+    value: fingerprint.value,
+  };
+}
+
 function normalizeRect(rect) {
   const normalized = {
     x: Number(rect?.x),
@@ -577,6 +595,7 @@ export async function createApplication({
       fingerprint: data.expectedFingerprint,
       updatedAt: new Date().toISOString(),
     });
+    await store.updateJobLabelsForFingerprint(data.expectedFingerprint, data.label);
     return { alias };
   }
 
@@ -600,6 +619,9 @@ export async function createApplication({
         const message = cleanText(input.message, 8_000);
         const scheduledFor = new Date(input.scheduledFor);
         const currentScheduledFor = new Date(job.scheduledFor);
+        const attachments = input.attachments === undefined
+          ? (job.attachments || [])
+          : await verifyAttachments(input.attachments);
         if (!message) throw new HttpError(400, "訊息內容不能空白");
         if (Number.isNaN(scheduledFor.getTime())) {
           throw new HttpError(400, "排程時間格式不正確");
@@ -619,6 +641,7 @@ export async function createApplication({
         } : {};
         const updated = await store.updateJob(id, {
           message,
+          attachments,
           ...timingUpdate,
           lastOutcome: "訊息與傳送時間已更新",
         });
@@ -734,6 +757,30 @@ export async function createApplication({
         after: body.after,
       };
       return sendJson(response, 200, await conversationSearch.context(fingerprint, input));
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/conversation/global-search") {
+      const body = await readJsonBody(request);
+      rejectConversationOverrides(body);
+      return sendJson(response, 200, await conversationSearch.searchAll({
+        query: body.query,
+        roles: body.roles,
+        provider: body.agent,
+        limit: body.limit,
+        cursor: body.cursor,
+      }));
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/conversation/global-context") {
+      const body = await readJsonBody(request);
+      rejectConversationOverrides(body);
+      const fingerprint = validateHistoricalFingerprint(body);
+      return sendJson(response, 200, await conversationSearch.context(fingerprint, {
+        anchor: body.anchor,
+        revision: body.revision,
+        before: body.before,
+        after: body.after,
+      }));
     }
 
     if (request.method === "POST" && url.pathname === "/api/attachments") {

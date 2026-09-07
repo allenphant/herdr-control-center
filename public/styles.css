@@ -308,6 +308,17 @@ h2 {
   transition: background-color 180ms ease, border-color 180ms ease, transform 150ms ease;
 }
 
+.button svg {
+  width: 18px;
+  height: 18px;
+  vertical-align: middle;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
 .button:active {
   transform: translateY(1px);
 }
@@ -689,6 +700,26 @@ h2 {
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.composer-panel.is-empty .composer-scroll {
+  display: grid;
+  min-height: 280px;
+  place-items: center;
+  padding: 28px;
+}
+
+.composer-panel.is-empty .target-empty {
+  width: min(100%, 380px);
+  margin: 0;
+  padding: 24px;
+  border: 0;
+  background: transparent;
+  text-align: center;
+}
+
+.composer-panel.is-empty .target-empty p {
+  margin-inline: auto;
 }
 
 .panel-heading {
@@ -2399,10 +2430,14 @@ dialog::backdrop {
 
 .conversation-hit-meta span,
 .conversation-message header span {
+  min-width: 0;
+  overflow: hidden;
   color: var(--ink-faint);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-hit-snippet {
@@ -2713,11 +2748,32 @@ dialog::backdrop {
 }
 
 .job-dialog-attachments {
+  display: grid;
+  gap: 10px;
   padding: 10px 12px;
   border-radius: var(--radius-control);
   color: var(--ink-soft);
   background: var(--surface-muted);
   font-size: 0.74rem;
+}
+
+.job-dialog-attachment-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.job-dialog-attachment-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.attachment-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--ink-faint);
+  font-size: 0.62rem;
 }
 
 .job-technical-details {

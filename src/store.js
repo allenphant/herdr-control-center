@@ -79,6 +79,22 @@ export class JsonStore {
     });
   }
 
+  async updateJobLabelsForFingerprint(fingerprint, label) {
+    return this.mutate((state) => {
+      let updatedCount = 0;
+      for (const job of state.jobs) {
+        const same = job.expectedFingerprint?.agent === fingerprint.agent &&
+          job.expectedFingerprint?.source === fingerprint.source &&
+          job.expectedFingerprint?.value === fingerprint.value;
+        if (!same) continue;
+        job.label = label || job.targetSnapshot?.terminalTitle || job.paneId || job.label;
+        job.updatedAt = new Date().toISOString();
+        updatedCount += 1;
+      }
+      return updatedCount;
+    });
+  }
+
   async addEvent(event) {
     return this.mutate((state) => {
       state.events.unshift(event);

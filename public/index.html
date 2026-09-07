@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#eff1ec" />
     <title>Pane Relay</title>
-    <link rel="stylesheet" href="/styles.css?v=22" />
-    <script type="module" src="/app.js?v=22"></script>
+    <link rel="stylesheet" href="/styles.css?v=23" />
+    <script type="module" src="/app.js?v=23"></script>
   </head>
   <body>
     <!--
@@ -27,6 +27,10 @@
         </div>
       </div>
       <div class="topbar-actions">
+        <button class="button button-quiet" id="open-global-conversation-search" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+          全域搜尋
+        </button>
         <div class="service-state" id="service-state" role="status">
           <span class="state-indicator" aria-hidden="true"></span>
           <span>連線中</span>
@@ -287,7 +291,19 @@
           </label>
           <div class="quick-time job-dialog-quick-time" id="job-dialog-quick-time" aria-label="快速設定傳送時間"></div>
           <div class="job-dialog-summary" id="job-dialog-summary"></div>
-          <div class="job-dialog-attachments" id="job-dialog-attachments" hidden></div>
+          <section class="job-dialog-attachments" id="job-dialog-attachments" hidden aria-labelledby="job-dialog-attachments-title">
+            <div class="job-dialog-attachment-heading">
+              <div>
+                <strong id="job-dialog-attachments-title">附加圖片</strong>
+                <span class="field-help">可補傳圖片；原有圖片會保留。</span>
+              </div>
+              <label class="button button-quiet attachment-button">
+                <span>補傳圖片</span>
+                <input id="job-dialog-attachment-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple />
+              </label>
+            </div>
+            <div class="attachment-list" id="job-dialog-attachment-list"></div>
+          </section>
           <details class="job-technical-details">
             <summary>技術資訊</summary>
             <dl id="job-dialog-technical"></dl>

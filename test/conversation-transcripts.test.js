@@ -215,3 +215,71 @@ test("repository ingests appended bytes, rebuilds truncation, and applies LRU bo
     await rm(homeDirectory, { recursive: true, force: true });
   }
 });
+
+test("global search discovers old conversations across providers and keeps context addressable", async () => {
+  const homeDirectory = await mkdtemp(path.join(os.tmpdir(), "conversation-global-search-"));
+  const claudeId = "00000000-0000-4000-8000-000000000041";
+  const codexId = "00000000-0000-7000-8000-000000000042";
+  const agyId = "00000000-0000-4000-8000-000000000043";
+  try {
+    const claudeDirectory = path.join(homeDirectory, ".claude", "projects", "old-project");
+    await mkdir(claudeDirectory, { recursive: true });
+    await writeFile(
+      path.join(claudeDirectory, `${claudeId}.jsonl`),
+      (await fixture("claude-active-branch.jsonl")).replaceAll(ids.claude, claudeId),
+    );
+
+    const codexDirectory = path.join(homeDirectory, ".codex", "sessions", "2026", "01", "01");
+    await mkdir(codexDirectory, { recursive: true });
+    await writeFile(
+      path.join(codexDirectory, `rollout-2026-01-01-${codexId}.jsonl`),
+      (await fixture("codex-original.jsonl")).replaceAll(ids.codex, codexId),
+    );
+
+    const agyDirectory = path.join(
+      homeDirectory,
+      ".gemini",
+      "antigravity-cli",
+      "brain",
+      agyId,
+      ".system_generated",
+      "logs",
+    );
+    await mkdir(agyDirectory, { recursive: true });
+    await writeFile(
+      path.join(agyDirectory, "transcript.jsonl"),
+      (await fixture("agy-transcript.jsonl")).replaceAll(ids.agy, agyId),
+    );
+
+    const indexPath = path.join(homeDirectory, "conversation-index.json");
+    const repository = new TranscriptRepository({ homeDirectory, discoveryTtlMs: 0, indexPath });
+    const service = new ConversationSearchService({ repository });
+    const result = await service.searchAll({ query: "needle", limit: 100 });
+    assert.equal(result.conversationsScanned, 3);
+    assert.equal(result.skipped, 0);
+    assert.deepEqual(new Set(result.hits.map((hit) => hit.agent)), new Set(["agy", "claude", "codex"]));
+    assert.ok(result.hits.every((hit) => hit.fingerprint?.value === hit.conversationId));
+    assert.ok(result.hits.every((hit) => hit.conversationRevision));
+    assert.ok(result.hits.every((hit) => !hit.locations.some((location) => location.includes(homeDirectory))));
+    const index = JSON.parse(await readFile(indexPath, "utf8"));
+    assert.equal(index.version, 1);
+    assert.equal(index.conversations.length, 3);
+
+    const restored = new ConversationSearchService({
+      repository: new TranscriptRepository({ homeDirectory, discoveryTtlMs: 0, indexPath }),
+    });
+    const restoredResult = await restored.searchAll({ query: "needle", limit: 100 });
+    assert.equal(restoredResult.hits.length, result.hits.length);
+
+    const selected = result.hits[0];
+    const context = await service.context(selected.fingerprint, {
+      anchor: selected.anchor,
+      revision: selected.conversationRevision,
+      before: 1,
+      after: 1,
+    });
+    assert.equal(context.messages.some((message) => message.anchor === selected.anchor), true);
+  } finally {
+    await rm(homeDirectory, { recursive: true, force: true });
+  }
+});

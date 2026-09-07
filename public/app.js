@@ -12,6 +12,8 @@ const ui = {
   jobDialog: document.querySelector("#job-dialog"),
   jobDialogActions: document.querySelector("#job-dialog-actions"),
   jobDialogAttachments: document.querySelector("#job-dialog-attachments"),
+  jobDialogAttachmentInput: document.querySelector("#job-dialog-attachment-input"),
+  jobDialogAttachmentList: document.querySelector("#job-dialog-attachment-list"),
   jobDialogMessage: document.querySelector("#job-dialog-message"),
   jobDialogQuickTime: document.querySelector("#job-dialog-quick-time"),
   jobDialogScheduledFor: document.querySelector("#job-dialog-scheduled-for"),
@@ -26,6 +28,7 @@ const ui = {
   conversationContext: document.querySelector("#conversation-context"),
   conversationContextMeta: document.querySelector("#conversation-context-meta"),
   conversationDialog: document.querySelector("#conversation-dialog"),
+  conversationDialogTitle: document.querySelector("#conversation-dialog-title"),
   conversationDialogSubtitle: document.querySelector("#conversation-dialog-subtitle"),
   conversationLoadMore: document.querySelector("#conversation-load-more"),
   conversationQuery: document.querySelector("#conversation-query"),
@@ -36,9 +39,13 @@ const ui = {
   conversationSearchForm: document.querySelector("#conversation-search-form"),
   conversationSearchStatus: document.querySelector("#conversation-search-status"),
   conversationSearchSubmit: document.querySelector("#conversation-search-submit"),
+  composerActionbar: document.querySelector(".composer-actionbar"),
+  composerHeading: document.querySelector(".composer-heading"),
+  composerPanel: document.querySelector(".composer-panel"),
   message: document.querySelector("#message"),
   messageCount: document.querySelector("#message-count"),
   openConversationSearch: document.querySelector("#open-conversation-search"),
+  openGlobalConversationSearch: document.querySelector("#open-global-conversation-search"),
   paneFilter: document.querySelector("#pane-filter"),
   paneSearchPopover: document.querySelector("#pane-search-popover"),
   refreshTopology: document.querySelector("#refresh-topology"),
@@ -101,6 +108,7 @@ const appState = {
   drafts: new Map(),
   activeJobId: null,
   jobDialogDirty: false,
+  jobDialogAttachmentItems: [],
   editingAlias: false,
   herdrFocus: new Map(),
   quota: null,
@@ -556,6 +564,124 @@ function renderAttachments() {
       ]),
     );
   }
+}
+
+function jobDialogAttachmentItemsFor(job) {
+  return (job.attachments || []).map((attachment) => ({
+    id: attachment.id,
+    file: null,
+    previewUrl: null,
+    status: "ready",
+    uploaded: attachment,
+    existing: true,
+  }));
+}
+
+function renderJobDialogAttachments(job, editable) {
+  const items = appState.jobDialogAttachmentItems;
+  ui.jobDialogAttachments.hidden = !editable && !items.length;
+  ui.jobDialogAttachmentInput.disabled = !editable;
+  ui.jobDialogAttachmentList.replaceChildren();
+  for (const attachment of items) {
+    const name = attachment.file?.name || attachment.uploaded?.name || "圖片";
+    const remove = attachment.existing ? null : element("button", {
+      type: "button",
+      className: "attachment-remove",
+      text: "移除",
+      "aria-label": `移除待傳圖片 ${name}`,
+      on: {
+        click: () => {
+          if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+          appState.jobDialogAttachmentItems = items.filter((item) => item.id !== attachment.id);
+          appState.jobDialogDirty = true;
+          renderJobDialogAttachments(job, editable);
+        },
+      },
+    });
+    const thumbnail = attachment.previewUrl
+      ? element("img", { src: attachment.previewUrl, alt: "", className: "attachment-thumb" })
+      : element("div", { className: "attachment-thumb attachment-placeholder", text: "已存" });
+    const status = attachment.status === "uploading"
+      ? "上傳到本機中"
+      : attachment.status === "error"
+        ? "上傳失敗，儲存時會重試"
+        : attachment.existing
+          ? `${formatBytes(attachment.uploaded?.size || 0)} · 已附加`
+          : `${formatBytes(attachment.file.size)} · 等待儲存`;
+    ui.jobDialogAttachmentList.append(element("div", { className: "attachment-item" }, [
+      thumbnail,
+      element("div", { className: "attachment-copy" }, [
+        element("strong", { text: name }),
+        element("span", { text: status }),
+      ]),
+      ...(remove ? [remove] : []),
+    ]));
+  }
+}
+
+function addJobDialogAttachmentFiles(files) {
+  const allowed = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+  const extensions = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+  };
+  const items = appState.jobDialogAttachmentItems;
+  let added = 0;
+  for (const sourceFile of files) {
+    if (items.length >= 5) {
+      toast("每個排程最多附加 5 張圖片", "error");
+      break;
+    }
+    if (!allowed.has(sourceFile.type)) {
+      toast(`${sourceFile.name || "圖片"} 不是支援的圖片格式`, "error");
+      continue;
+    }
+    if (sourceFile.size > 8 * 1024 * 1024) {
+      toast(`${sourceFile.name || "圖片"} 超過 8 MB`, "error");
+      continue;
+    }
+    const file = sourceFile.name
+      ? sourceFile
+      : new File([sourceFile], `clipboard-${Date.now()}.${extensions[sourceFile.type]}`, { type: sourceFile.type });
+    items.push({
+      id: crypto.randomUUID(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+      status: "pending",
+      uploaded: null,
+      existing: false,
+    });
+    added += 1;
+  }
+  appState.jobDialogDirty = appState.jobDialogDirty || added > 0;
+  const job = appState.jobs.find((item) => item.id === appState.activeJobId);
+  if (job) renderJobDialogAttachments(job, ["scheduled", "deferred", "paused"].includes(job.status));
+  return added;
+}
+
+async function uploadPendingJobDialogAttachments() {
+  for (const attachment of appState.jobDialogAttachmentItems) {
+    if (attachment.uploaded) continue;
+    attachment.status = "uploading";
+    const job = appState.jobs.find((item) => item.id === appState.activeJobId);
+    renderJobDialogAttachments(job, true);
+    try {
+      const data = await readFileAsBase64(attachment.file);
+      const response = await requestJson("/api/attachments", {
+        method: "POST",
+        body: JSON.stringify({ name: attachment.file.name, data }),
+      });
+      attachment.uploaded = response.attachment;
+      attachment.status = "ready";
+    } catch (error) {
+      attachment.status = "error";
+      if (job) renderJobDialogAttachments(job, true);
+      throw error;
+    }
+  }
+  return appState.jobDialogAttachmentItems.map((item) => item.uploaded).filter(Boolean);
 }
 
 function readFileAsBase64(file) {
@@ -1218,6 +1344,11 @@ function renderRoutes() {
 
 function renderTarget() {
   const selected = appState.selected;
+  const hasSelection = Boolean(selected);
+  ui.composerPanel.classList.toggle("is-empty", !hasSelection);
+  ui.composerHeading.hidden = !hasSelection;
+  ui.scheduleForm.hidden = !hasSelection;
+  ui.composerActionbar.hidden = !hasSelection;
   ui.targetEmpty.hidden = Boolean(selected);
   ui.targetSummary.hidden = !selected;
   ui.scheduleFields.disabled = !selected;
@@ -1274,7 +1405,14 @@ function resetConversationSearch() {
     contextLoading: false,
     error: null,
     query: "",
+    mode: "selected",
+    activeHitKey: null,
   });
+}
+
+function conversationHitKey(hit) {
+  const fingerprint = hit.fingerprint || appState.selected?.fingerprint;
+  return `${fingerprint?.source || ""}:${fingerprint?.value || ""}:${hit.anchor}`;
 }
 
 function renderConversationContext() {
@@ -1324,12 +1462,13 @@ function renderConversationContext() {
 
 function renderConversationSearch() {
   const state = appState.conversationSearch;
+  const isGlobal = state.mode === "global";
   ui.conversationResults.replaceChildren();
   ui.conversationSearchSubmit.disabled = state.loading;
   ui.conversationLoadMore.disabled = state.loading;
   ui.conversationResults.setAttribute("aria-busy", String(state.loading));
   ui.conversationSearchStatus.textContent = state.loading
-    ? state.hits.length ? "載入更多命中…" : "搜尋完整 conversation…"
+    ? state.hits.length ? "載入更多命中…" : isGlobal ? "搜尋全部歷史 transcript…" : "搜尋這段 conversation…"
     : state.error || (state.revision
       ? state.hits.length ? `已載入 ${state.hits.length} 筆命中` : "找不到符合的可見訊息"
       : "輸入文字開始搜尋");
@@ -1341,22 +1480,33 @@ function renderConversationSearch() {
   if (!state.hits.length) {
     ui.conversationResults.append(element("div", { className: "conversation-placeholder" }, [
       element("strong", { text: state.loading ? "正在建立搜尋結果" : state.error ? "搜尋未完成" : state.revision ? "沒有命中" : "等待搜尋" }),
-      element("p", { text: state.error || (state.revision ? "試試另一個詞，或調整訊息角色。" : "搜尋只包含 User 與 Assistant 看得到的文字。") }),
+      element("p", {
+        text: state.error || (state.revision
+          ? "試試另一個詞，或調整訊息角色。"
+          : isGlobal
+            ? "首次搜尋會建立或更新本機歷史索引，之後的搜尋會更快。"
+            : "搜尋只包含 User 與 Assistant 看得到的文字。"),
+      }),
     ]));
   } else {
     for (const hit of state.hits) {
+      const active = conversationHitKey(hit) === state.activeHitKey;
       const snippet = element("span", { className: "conversation-hit-snippet" });
       renderMarkdown(snippet, hit.snippet, { highlight: state.query, inlineOnly: true });
       ui.conversationResults.append(element("button", {
-        className: `conversation-hit ${hit.anchor === state.activeAnchor ? "is-active" : ""}`.trim(),
+        className: `conversation-hit ${active ? "is-active" : ""}`.trim(),
         type: "button",
         dataset: { anchor: hit.anchor, role: hit.role },
-        "aria-pressed": String(hit.anchor === state.activeAnchor),
-        on: { click: () => void loadConversationContext(hit.anchor) },
+        "aria-pressed": String(active),
+        on: { click: () => void loadConversationContext(hit) },
       }, [
         element("span", { className: "conversation-hit-meta" }, [
           element("strong", { text: hit.role === "user" ? "User" : "Assistant" }),
-          element("span", { text: hit.timestamp ? formatDate(hit.timestamp, true) : `#${hit.ordinal + 1}` }),
+          element("span", {
+            text: isGlobal
+              ? `${hit.timestamp ? formatDate(hit.timestamp, true) : `#${hit.ordinal + 1}`} · ${agentName(hit.agent)} · ${hit.locations?.[0] || "歷史 transcript"}`
+              : hit.timestamp ? formatDate(hit.timestamp, true) : `#${hit.ordinal + 1}`,
+          }),
         ]),
         snippet,
       ]));
@@ -1396,18 +1546,29 @@ async function runConversationSearch({ append = false } = {}) {
     state.nextCursor = null;
     state.revision = null;
     state.activeAnchor = null;
+    state.activeHitKey = null;
     state.context = [];
   }
   renderConversationSearch();
   try {
-    const payload = await requestJson("/api/conversation/search", {
+    const payload = await requestJson(state.mode === "global"
+      ? "/api/conversation/global-search"
+      : "/api/conversation/search", {
       method: "POST",
-      body: JSON.stringify(selectedConversationRequest({
-        query,
-        roles,
-        limit: 30,
-        cursor: append ? state.nextCursor : null,
-      })),
+      body: JSON.stringify(state.mode === "global"
+        ? {
+          query,
+          roles,
+          agent: "all",
+          limit: 30,
+          cursor: append ? state.nextCursor : null,
+        }
+        : selectedConversationRequest({
+          query,
+          roles,
+          limit: 30,
+          cursor: append ? state.nextCursor : null,
+        })),
     });
     if (requestId !== state.searchRequestId) return;
     state.hits = append ? [...state.hits, ...payload.hits] : payload.hits;
@@ -1423,21 +1584,32 @@ async function runConversationSearch({ append = false } = {}) {
   }
 }
 
-async function loadConversationContext(anchor) {
+async function loadConversationContext(hit) {
   const state = appState.conversationSearch;
   const requestId = state.beginContext();
-  state.activeAnchor = anchor;
+  state.activeAnchor = hit.anchor;
+  state.activeHitKey = conversationHitKey(hit);
   state.error = null;
   renderConversationSearch();
   try {
-    const payload = await requestJson("/api/conversation/context", {
+    const payload = await requestJson(state.mode === "global"
+      ? "/api/conversation/global-context"
+      : "/api/conversation/context", {
       method: "POST",
-      body: JSON.stringify(selectedConversationRequest({
-        anchor,
-        revision: state.revision,
-        before: 4,
-        after: 4,
-      })),
+      body: JSON.stringify(state.mode === "global"
+        ? {
+          fingerprint: hit.fingerprint,
+          anchor: hit.anchor,
+          revision: hit.conversationRevision,
+          before: 4,
+          after: 4,
+        }
+        : selectedConversationRequest({
+          anchor: hit.anchor,
+          revision: state.revision,
+          before: 4,
+          after: 4,
+        })),
     });
     if (requestId !== state.contextRequestId) return;
     state.context = payload.messages;
@@ -1452,19 +1624,39 @@ async function loadConversationContext(anchor) {
   }
 }
 
-function openConversationSearch() {
-  const selected = appState.selected;
-  if (!selected || !SEARCHABLE_TRANSCRIPT_SOURCES.has(selected.fingerprint?.source)) return;
+function showConversationSearch({ mode, title, agent, subtitle }) {
   resetConversationSearch();
+  appState.conversationSearch.mode = mode;
   ui.conversationQuery.value = "";
   ui.conversationRoleUser.checked = true;
   ui.conversationRoleAssistant.checked = true;
-  ui.conversationAgent.textContent = agentName(selected.pane.agent);
-  ui.conversationAgent.dataset.agent = selected.pane.agent;
-  ui.conversationDialogSubtitle.textContent = `${paneDisplayName(selected.pane, selected.fingerprint)} · ${selected.pane.pane_id} · ${shortFingerprint(selected.fingerprint)}`;
+  ui.conversationDialogTitle.textContent = title;
+  ui.conversationAgent.textContent = agent;
+  ui.conversationAgent.dataset.agent = mode === "global" ? "all" : agent.toLowerCase();
+  ui.conversationDialogSubtitle.textContent = subtitle;
   renderConversationSearch();
   ui.conversationDialog.showModal();
   queueMicrotask(() => ui.conversationQuery.focus());
+}
+
+function openConversationSearch() {
+  const selected = appState.selected;
+  if (!selected || !SEARCHABLE_TRANSCRIPT_SOURCES.has(selected.fingerprint?.source)) return;
+  showConversationSearch({
+    mode: "selected",
+    title: "搜尋 conversation",
+    agent: agentName(selected.pane.agent),
+    subtitle: `${paneDisplayName(selected.pane, selected.fingerprint)} · ${selected.pane.pane_id} · ${shortFingerprint(selected.fingerprint)}`,
+  });
+}
+
+function openGlobalConversationSearch() {
+  showConversationSearch({
+    mode: "global",
+    title: "全域搜尋 conversation",
+    agent: "全部 Agent",
+    subtitle: "搜尋本機已發現的 Claude、Codex 與 AGY 歷史 transcript",
+  });
 }
 
 function formatQuotaPercent(value) {
@@ -1749,6 +1941,14 @@ function jobStatusSummary(jobs) {
   return `${active} 待執行 / ${sent} 已送達 / ${failed} 失敗`;
 }
 
+function jobDisplayName(job) {
+  return aliasForFingerprint(job.expectedFingerprint)?.label ||
+    job.targetSnapshot?.terminalTitle ||
+    job.label ||
+    job.paneId ||
+    "Terminal pane";
+}
+
 function jobActionButton(label, action, job, danger = false) {
   return element("button", {
     className: `job-action ${danger ? "is-danger" : ""}`.trim(),
@@ -1804,17 +2004,19 @@ async function saveJobEdits(job, textarea, scheduledForInput) {
     return;
   }
   try {
+    const attachments = await uploadPendingJobDialogAttachments();
     await requestJson(`/api/jobs/${encodeURIComponent(job.id)}/action`, {
       method: "POST",
       body: JSON.stringify({
         action: "edit-job",
         message,
         scheduledFor: timeChanged ? scheduledFor.toISOString() : job.scheduledFor,
+        attachments,
       }),
     });
     appState.jobDialogDirty = false;
+    ui.jobDialog.close();
     await loadState();
-    renderJobDialog();
     toast("訊息與傳送時間已更新");
   } catch (error) {
     toast(error.message, "error");
@@ -1869,7 +2071,7 @@ function renderJobDialog({ preserveEdits = false } = {}) {
   }
   const editable = ["scheduled", "deferred", "paused"].includes(job.status);
   const timeValue = job.nextRunAt || job.lastRunAt || job.scheduledFor;
-  ui.jobDialogTitle.textContent = job.label;
+  ui.jobDialogTitle.textContent = jobDisplayName(job);
   ui.jobDialogStatus.textContent = STATUS_TEXT[job.status] || job.status;
   ui.jobDialogStatus.dataset.status = job.status;
   ui.jobDialogTiming.textContent = `${jobStateExplanation(job)} · ${formatDate(timeValue)}`;
@@ -1887,10 +2089,7 @@ function renderJobDialog({ preserveEdits = false } = {}) {
     summaryItem("傳送條件", deliveryRuleLabel(job)),
     summaryItem("最長等待", graceLabel(job)),
   );
-  ui.jobDialogAttachments.hidden = !job.attachments?.length;
-  ui.jobDialogAttachments.textContent = job.attachments?.length
-    ? `附加 ${job.attachments.length} 張圖片：${job.attachments.map((item) => item.name).join("、")}`
-    : "";
+  renderJobDialogAttachments(job, editable);
   ui.jobDialogTechnical.replaceChildren(
     element("dt", { text: "Herdr session" }),
     element("dd", { text: job.sessionName }),
@@ -1922,6 +2121,7 @@ function renderJobDialog({ preserveEdits = false } = {}) {
 function openJobDialog(job) {
   appState.activeJobId = job.id;
   appState.jobDialogDirty = false;
+  appState.jobDialogAttachmentItems = jobDialogAttachmentItemsFor(job);
   renderJobDialog();
   if (!ui.jobDialog.open) ui.jobDialog.showModal();
   const editable = ["scheduled", "deferred", "paused"].includes(job.status);
@@ -1962,7 +2162,7 @@ function renderJobs() {
         className: "job-item",
         role: "button",
         tabindex: "0",
-        "aria-label": `開啟 ${job.label} 排程`,
+        "aria-label": `開啟 ${jobDisplayName(job)} 排程`,
         on: {
           click: open,
           keydown: (event) => {
@@ -1973,7 +2173,7 @@ function renderJobs() {
         },
       }, [
         element("div", { className: "job-topline" }, [
-          element("h3", { className: "job-title", text: job.label }),
+          element("h3", { className: "job-title", text: jobDisplayName(job) }),
           statusLabel(job.status),
         ]),
         element("div", { className: "job-trigger" }, [
@@ -2058,8 +2258,10 @@ async function loadState() {
     }
     if (JSON.stringify(aliases) !== JSON.stringify(appState.aliases)) {
       appState.aliases = aliases;
+      renderJobs();
       renderRoutes();
       renderTarget();
+      if (ui.jobDialog.open) renderJobDialog({ preserveEdits: true });
     }
   } catch (error) {
     setServiceState("error", "服務資料讀取失敗");
@@ -2458,6 +2660,7 @@ ui.quotaBackdrop.addEventListener("click", () => {
 ui.themeToggle.addEventListener("click", cycleTheme);
 ui.closeJobDialog.addEventListener("click", () => ui.jobDialog.close());
 ui.openConversationSearch.addEventListener("click", openConversationSearch);
+ui.openGlobalConversationSearch.addEventListener("click", openGlobalConversationSearch);
 ui.closeConversationSearch.addEventListener("click", () => ui.conversationDialog.close());
 ui.conversationDialog.addEventListener("click", (event) => {
   if (event.target === ui.conversationDialog) ui.conversationDialog.close();
@@ -2474,13 +2677,43 @@ ui.jobDialog.addEventListener("click", (event) => {
 ui.jobDialog.addEventListener("close", () => {
   appState.activeJobId = null;
   appState.jobDialogDirty = false;
+  for (const attachment of appState.jobDialogAttachmentItems) {
+    if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+  }
+  appState.jobDialogAttachmentItems = [];
+  ui.jobDialogAttachmentList.replaceChildren();
+  ui.jobDialogAttachments.hidden = true;
 });
 ui.jobDialogMessage.addEventListener("keydown", (event) => event.stopPropagation());
+ui.jobDialogMessage.addEventListener("paste", (event) => {
+  const files = [...(event.clipboardData?.items || [])]
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  if (!files.length) return;
+  event.preventDefault();
+  const text = event.clipboardData?.getData("text/plain") || "";
+  if (text) {
+    ui.jobDialogMessage.setRangeText(
+      text,
+      ui.jobDialogMessage.selectionStart,
+      ui.jobDialogMessage.selectionEnd,
+      "end",
+    );
+  }
+  const added = addJobDialogAttachmentFiles(files);
+  if (added) toast(`已從剪貼簿加入 ${added} 張圖片`);
+});
 ui.jobDialogMessage.addEventListener("input", () => {
   appState.jobDialogDirty = true;
 });
 ui.jobDialogScheduledFor.addEventListener("input", () => {
   appState.jobDialogDirty = true;
+});
+ui.jobDialogAttachmentInput.addEventListener("change", () => {
+  const added = addJobDialogAttachmentFiles(ui.jobDialogAttachmentInput.files || []);
+  ui.jobDialogAttachmentInput.value = "";
+  if (added) toast(`已加入 ${added} 張待傳圖片`);
 });
 document.addEventListener("pointerdown", (event) => {
   if (ui.paneSearchPopover.hidden) return;
