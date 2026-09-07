@@ -28,6 +28,12 @@ When Herdr recognizes Codex or AGY but has no `agent_session`, Pane Relay attemp
 
 The composer supports up to five PNG, JPEG, WebP, or GIF attachments of 8 MB each. Images are stored with owner-only permissions under `data/attachments`, and the scheduled prompt tells the original agent session which local paths to inspect. Herdr's prompt interface is text-only, so this local-path handoff is used instead of terminal clipboard image injection.
 
+The queue editor can change an active job's message and scheduled time under the same per-job lock used by delivery and cancellation. It can append images without removing existing attachments, offers ordinary time shortcuts and the bound Agent's quota-reset shortcut, and closes immediately after a successful save. Pane aliases are bound to the conversation fingerprint, so changing a pane name also updates existing queue records for that conversation.
+
+The center composer intentionally stays empty until a pane is selected. It shows only the instruction to choose a pane; the message form, attachment controls, quick times, and action buttons remain hidden rather than appearing as unusable disabled controls.
+
+The header's global search can search older Claude, Codex, and AGY conversations without a selected pane. It uses the persistent normalized index at `~/.cache/herdr-control-center/conversation-index.json`, incrementally updates changed transcript sources, and returns constrained historical context. The selected-pane search continues to revalidate the live Herdr fingerprint before reading its transcript.
+
 ## Keep it running with systemd
 
 This is the recommended long-term form: a small user-level background service on the same machine as Herdr, with `http://localhost:4317` as its control surface. It is not intended to be a conventional cloud-hosted web app because cloud infrastructure cannot directly access the local Herdr socket or live terminal panes.
