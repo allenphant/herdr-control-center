@@ -1,5 +1,7 @@
 # 手機與跨裝置操作 Herdr 指南
 
+> 語言 / Languages：繁體中文在前，English 在文件後半。
+
 > 本文件是 [Herdr Control Center](../README.md) 的遠端存取指南。若要在瀏覽器中選定特定 pane、核對原對話並排程續作，請參閱 [Pane Relay 文件](pane-relay.md)。
 
 > **Mobile Herdr AI Agent Workflow & Remote Access Guide**
@@ -307,3 +309,188 @@ herdr
 
 ## 結語
 透過這套配置，您可以將 Linux 電腦打造成一台永不停歇的 AI 算力中心，無論人在何處、使用何種裝置，隨時都能以最高效率監控、驗收與指揮 AI 工作團隊！
+
+---
+
+## English
+
+> This is the English companion to the Traditional Chinese guide above. Commands, addresses, and product names are kept unchanged so the two versions can be followed interchangeably.
+
+### Overview
+
+This guide explains how to securely connect to and operate a Linux computer running `herdr` from Android, iOS, or another computer over 4G/5G and across national networks. It covers multiple AI coding agents such as Claude Code, Codex, and AGY, along with browser-service forwarding and controlled multi-user access.
+
+The architecture is:
+
+```text
+Mobile / PC / Mac
+    |
+    | Termius or terminal + Tailscale VPN
+    v
+Linux host
+    |
+    +-- OpenSSH :22
+    +-- herdr persistent session
+    |     +-- Claude Code pane
+    |     +-- Codex pane
+    |     +-- AGY / terminal pane
+    +-- local Web services, for example http://127.0.0.1:4317
+```
+
+No router port forwarding is required. Tailscale provides the private network path, and the persistent Herdr session keeps agents running when the phone disconnects or the app closes.
+
+### Prerequisites
+
+On the Linux host, install and configure OpenSSH, Tailscale, and `herdr`. On the phone, install the Tailscale and Termius apps. A second computer can use its native terminal together with Tailscale.
+
+### Linux host setup
+
+Enable SSH and verify port 22:
+
+```bash
+sudo systemctl enable --now ssh
+ss -tulpn | grep 22
+```
+
+Start Tailscale if necessary and collect the connection details:
+
+```bash
+sudo tailscale up
+tailscale ip -4
+whoami
+hostname
+```
+
+Use the same Tailscale account or organization on every device. The Tailscale IPv4 address, Linux username, and hostname are referred to as `<YOUR_TAILSCALE_IP>`, `<YOUR_USERNAME>`, and `<YOUR_HOSTNAME>` below.
+
+For easier mobile use, the guide recommends binding Herdr zoom to one key. Edit `~/.config/herdr/config.toml`:
+
+```toml
+onboarding = false
+
+[session]
+resume_agents_on_restore = true
+
+[keys]
+zoom = "f9"
+
+[ui]
+agent_panel_sort = "priority"
+```
+
+Apply the change with:
+
+```bash
+herdr server reload-config
+```
+
+### Phone setup with Tailscale and Termius
+
+1. Install Tailscale, sign in with the same account or organization as the host, and confirm the Linux machine is online.
+2. On Android, set Tailscale battery usage to **Unrestricted** so the VPN is not suspended in the background.
+3. In Termius, create a new host using the Tailscale IP, port `22`, and the Linux username. Use a dedicated SSH key or account where possible instead of sharing a personal password.
+4. Enable UTF-8, CJK support, and voice input in Termius when Traditional Chinese input is needed.
+
+The Termius Extra Keys Bar can send `F9` for Herdr zoom, `Ctrl+b` for the Herdr prefix, and clipboard paste. Use SFTP to upload a phone screenshot, then ask the Agent to inspect the uploaded file.
+
+### Daily workflow
+
+| Action | Steps |
+| --- | --- |
+| Enter the workspace | Connect in Termius and run `herdr`. |
+| Zoom one Agent pane | Select the pane and press `F9`. |
+| Restore the split layout | Press `F9` again. |
+| Send a Chinese or voice prompt | Use the keyboard microphone, then press `Enter`. |
+| Split a pane right | Send `Ctrl+b`, then `v`. |
+| Split a pane below | Send `Ctrl+b`, then `-`. |
+| Close the current pane | Send `Ctrl+b`, then `x`. |
+| Leave the phone session | Close Termius; background Agents keep running. |
+
+### Traveling internationally
+
+Tailscale can use nearby DERP relays and WireGuard traversal when direct connectivity is unavailable. A 100–150 ms round trip is generally acceptable for the workflow of entering a request, waiting for an Agent, and reviewing its output.
+
+Before traveling, disable automatic host sleep and consider enabling BIOS `AC Power Recovery` so the machine can recover after a power interruption.
+
+### Open a local Web service from the phone
+
+Pane Relay binds to `127.0.0.1:4317` by default, so a phone cannot connect to it directly. Use one of these private forwarding methods.
+
+#### Option A: Termius port forwarding
+
+Create a Termius port-forward rule named `Web-4317` for the Linux host:
+
+- Local port: `4317`
+- Remote destination: `127.0.0.1`
+- Remote destination port: `4317`
+
+Start the tunnel, then open `http://127.0.0.1:4317` or `http://localhost:4317` in the phone browser.
+
+#### Option B: Tailscale Serve
+
+On the Linux host:
+
+```bash
+tailscale serve --bg 4317
+tailscale serve status
+```
+
+Open the private HTTPS address shown by Tailscale on the phone. To remove the forwarding rule:
+
+```bash
+tailscale serve reset
+```
+
+Do not expose Pane Relay by changing `HOST` to `0.0.0.0` without adding an authenticated private-network layer.
+
+### Apple devices and another computer
+
+On iPhone or iPad, install Tailscale and Termius (or Blink Shell), sign in to the same Tailscale account, and connect to the host on port `22`. iPadOS can use an external keyboard and split screen for Safari plus Termius.
+
+From macOS:
+
+```bash
+ssh <YOUR_USERNAME>@<YOUR_TAILSCALE_IP>
+herdr
+```
+
+If the client also has Herdr installed, use:
+
+```bash
+herdr --remote <YOUR_USERNAME>@<YOUR_TAILSCALE_IP>
+```
+
+From Windows Terminal or PowerShell:
+
+```powershell
+ssh <YOUR_USERNAME>@<YOUR_TAILSCALE_IP>
+herdr
+```
+
+### Teaching a teammate to connect
+
+For an organization member, place the teammate's device in the same Tailscale network. For an external collaborator, share only the host node from the Tailscale Admin Console. Prefer creating a dedicated Linux account rather than sharing a personal login:
+
+```bash
+sudo adduser colleague_name
+sudo usermod -aG sudo colleague_name
+```
+
+The collaborator then connects with:
+
+```bash
+ssh colleague_name@<YOUR_TAILSCALE_IP>
+herdr
+```
+
+Remember that shared Herdr access can expose the same panes and terminal contents to every attached user; grant only the permissions the collaboration requires.
+
+### Troubleshooting
+
+- **Connection timed out:** verify that both devices use the same Tailscale network and toggle the phone VPN off and on again.
+- **Relay server unavailable:** a mobile-network transition can temporarily delay the local socket; restart Tailscale or Termius after connectivity stabilizes.
+- **No mouse right-click:** use `Ctrl+b` combinations or the `F9` shortcut instead of relying on a mobile mouse gesture.
+
+### Security reminder
+
+Keep SSH protected, use Tailscale or an authenticated tunnel instead of public port forwarding, and treat pane previews, uploaded images, transcript indexes, and scheduled prompts as private project data. The local Web service has no built-in network authentication.

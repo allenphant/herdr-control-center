@@ -1,5 +1,7 @@
 # Pane Relay
 
+> Languages: English first, followed by 繁體中文。Technical identifiers and API commands remain unchanged.
+
 <!-- impeccable:product-schema 1 -->
 
 ## Platform
@@ -65,3 +67,68 @@ The installed Herdr CLI exposes stable JSON for session, workspace, pane, and ag
 ## Accessibility & Inclusion
 
 The interface must be keyboard operable, use explicit form labels and status text, preserve visible focus, respect reduced motion, and maintain WCAG AA contrast in light and dark modes.
+
+## 繁體中文
+
+### 平台
+
+Web。
+
+### 技術棧
+
+Pane Relay 是本機 Node.js 服務，搭配不需要安裝套件的 Web 介面。實作使用 Node.js 標準函式庫、瀏覽器原生 JavaScript 與 CSS，因此可以和 Herdr 並行執行。
+
+### 使用者
+
+主要使用者是在 Herdr 中同時執行多個 coding agent 的開發者。當 Agent 遇到週期性額度限制時，他們可以保留現有對話，稍後自動投遞接續訊息，不必在額度重置時回到終端機。
+
+### 產品目的
+
+Pane Relay 讓使用者為手動選定的 Herdr pane 排程 prompt。成功代表訊息在指定時間送達同一段 live conversation；若原本的對話無法驗證，系統必須拒絕投遞並清楚說明原因。
+
+### 定位
+
+每筆 job 綁定 Herdr session、明確 pane ID 與目前佔用該 pane 的 agent-session fingerprint。scheduler 在實際投遞時會再次驗證三者，而不是依 Agent 類型或顯示名稱路由。
+
+### 執行環境
+
+產品在持久 Herdr session 旁邊本機執行。使用者從即時、短暫的終端預覽辨認 workspace、tab 與 pane，再確認 Agent 身分與狀態、撰寫接續 prompt、選擇本機日期時間，並監看排程與已完成投遞。
+
+### 能力與限制
+
+- 探索執行中的 Herdr session，以及 workspace、tab、pane 與 Agent 狀態。
+- 讀取有限的純文字尾端作為 pane 選擇提示，不保存終端內容。
+- 依 Herdr 真實 pane rectangle 顯示空間布局；過密或不一致時退回清單模式。
+- 為明確 pane 建立一次性、每日或每週 prompt 排程。
+- 附加最多五張本機圖片，並把驗證過的路徑交給原本的 Agent session。
+- 在投遞前編輯佇列訊息，並顯示即時倒數。
+- 跨服務重啟保存排程與投遞歷史。
+- 在投遞前立即驗證預期的 `agent_session` 身分。
+- 依唯一的 live-process 證據安全修復 Codex 或 AGY 的缺失 `agent_session`。
+- 搜尋綁定 pane 的完整可見 user/assistant 對話，以及透過 global search 搜尋 Claude、Codex、AGY 的歷史對話。
+- 將 conversation Markdown 安全轉成瀏覽器原生 DOM，不執行原始 HTML。
+- 要求建立排程時，pane 選取時捕獲的 fingerprint 仍然相符。
+- 只能透過 `herdr agent prompt <pane-id>` 投遞，不使用 raw pane text 或 shell execution。
+- pane 消失、沒有可辨識 Agent 或換成其他 session 時拒絕投遞。
+- 預設等待 Agent 進入 settled 的 `idle` 或 `done` 狀態，並在仍工作時使用有限重試窗口。
+- 原對話只有在原 Agent process/session 仍可用時才能繼續；process 結束後的 Agent 專屬 resume 行為不在已確認範圍內。
+- 本機服務只綁定 loopback，且不提供遠端驗證。
+- pane 預覽按需讀取、只留在記憶體，並限制同時 Herdr read 數量。
+- 圖片附件以 owner-only 權限保存，因為 Herdr prompt command 接受文字而非 binary clipboard payload。
+
+### 目前掌握的證據
+
+已安裝的 Herdr CLI 提供 session、workspace、pane 與 Agent 檢查所需的穩定 JSON；Agent record 包含 `pane_id`、`agent_status` 與具備穩定 source/value 的 `agent_session`。目前沒有外部 benchmark、客戶或商業成果聲稱，不應自行捏造。
+
+### 產品原則
+
+- Pane 優先：選定的終端位置就是投遞目標。
+- 對話安全：過期或被替換的 occupant 視為失敗，不做 best-effort send。
+- 狀態可見：所有排程、deferred、sent、canceled、failed 狀態都能檢視。
+- 空間辨識：在選定目的地前，同時提供 pane 位置與最近內容。
+- 本機且可逆：設定留在使用者機器上，排程可暫停或取消。
+- 熟悉控制：標準日期、時間、選取與清單互動優先於裝飾性介面。
+
+### 無障礙與共融
+
+介面必須可用鍵盤操作，使用明確表單 label 與狀態文字，保留可見 focus，尊重 reduced motion，並在明亮與深色主題維持 WCAG AA 對比度。
