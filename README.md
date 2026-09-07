@@ -13,7 +13,7 @@ The web console does not route by agent name alone. Every delivery is bound to t
 - Message editing, image attachments, delivery countdowns, recurring schedules, and queue record editing
 - Codex, Claude, and AGY quota summaries with reset-time shortcuts
 - Queue editor support for changing scheduled messages/times, appending images, closing after save, and syncing pane aliases
-- Optional desktop screenshot editor for marking and copying annotated PNGs without overwriting originals
+- Optional desktop screenshot workflow through the standalone [Screenshot Editor](https://github.com/allenphant/screenshot-editor)
 - A user-level `systemd` service and desktop shortcut
 - Mobile and remote access through Herdr, SSH, Tailscale, and Termius
 
@@ -54,15 +54,9 @@ Use **全域搜尋** in the header to search older conversations without selecti
 
 The first search after a service restart may build or update the local index. The persistent index is stored at `~/.cache/herdr-control-center/conversation-index.json`; subsequent searches reuse it and update only changed transcript sources. The index contains normalized visible conversation text and source signatures, so it should be treated as private local data. The browser receives constrained conversation fingerprints and context, never native transcript paths.
 
-## Optional screenshot editor
+## Optional screenshot workflow
 
-The screenshot editor is a separate local desktop workflow; it is not started by `pane-relay.service` or `scripts/install-user-service.sh`. Start its watcher separately:
-
-```bash
-bash scripts/screenshot-editor-watcher.sh
-```
-
-The watcher monitors the XDG `Pictures/Screenshots` directory, starts a loopback editor at `http://127.0.0.1:4123` when needed, and opens a notification after a new screenshot arrives. The editor supports pen, rectangle, ellipse, crop, undo/redo, and saving a new ` - annotated.png` file while preserving the original. `inotifywait` is required for watching; `notify-send` provides the notification path, `google-chrome` or `xdg-open` opens the editor, and `wl-copy` enables copying the annotated PNG to the clipboard.
+The screenshot editor is maintained in the standalone [Screenshot Editor repository](https://github.com/allenphant/screenshot-editor). It watches `Pictures/Screenshots`, opens a local browser editor at `127.0.0.1:4123`, and saves annotated PNGs without overwriting the originals. It is not started by `pane-relay.service` or `scripts/install-user-service.sh`; follow that repository's requirements and watcher setup separately.
 
 ## Demo
 
@@ -87,7 +81,7 @@ The watcher monitors the XDG `Pictures/Screenshots` directory, starts a loopback
 
 Pane Relay binds to `127.0.0.1` by default and has no built-in network authentication. Do not expose it directly with `HOST=0.0.0.0`. For another device, use an authenticated SSH tunnel or a private-network proxy. Pane previews and uploaded images may contain private project information.
 
-Pane Relay runtime state and uploaded attachments live under `data/` by default and are intentionally excluded from Git. The global conversation index lives under `~/.cache/herdr-control-center/`; provider quota readers may also use their local statusline or usage caches. The screenshot editor writes annotated images under the user's `Pictures/Screenshots` directory and never overwrites the source image. All of these locations may contain private project or conversation information.
+Pane Relay runtime state and uploaded attachments live under `data/` by default and are intentionally excluded from Git. The global conversation index lives under `~/.cache/herdr-control-center/`; provider quota readers may also use their local statusline or usage caches. All of these locations may contain private project or conversation information.
 
 ## Development
 
