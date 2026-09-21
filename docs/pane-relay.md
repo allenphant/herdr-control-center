@@ -38,6 +38,8 @@ Composer 最多支援五張 PNG、JPEG、WebP 或 GIF 圖片，每張 8 MB。圖
 
 Header 的「全域搜尋」不需要先選 pane，就能搜尋較早的 Claude、Codex 與 AGY 對話。它使用 `~/.cache/herdr-control-center/conversation-index.json` 的持久化 normalized index，增量更新變更的 transcript source，並回傳受限的歷史前後文；選定 pane 的搜尋仍會在讀取 transcript 前重新驗證 live fingerprint。
 
+額度浮球的 AGY 資料來自 `deploy/agy-statusline-relay.sh` 鏡射的官方 status-line payload（`data/agy-quota.json`），以 `node scripts/install-agy-quota-relay.mjs` 啟用；沒有快照時才退回本機 language server probe，實測於 AGY 1.2.7 該 probe 會因缺少 CSRF token 被拒絕。
+
 ### 使用 systemd 持續執行
 
 長期建議使用同一台 Herdr 機器上的 user-level background service，控制入口為 `http://localhost:4317`。它不是傳統 cloud-hosted Web app，因為 cloud infrastructure 無法直接存取本機 Herdr socket 或 live terminal pane。
@@ -155,6 +157,8 @@ The header's global search can search older Claude, Codex, and AGY conversations
 ## Keep it running with systemd
 
 This is the recommended long-term form: a small user-level background service on the same machine as Herdr, with `http://localhost:4317` as its control surface. It is not intended to be a conventional cloud-hosted web app because cloud infrastructure cannot directly access the local Herdr socket or live terminal panes.
+The quota bubble's AGY data comes from the official status-line payload mirrored by `deploy/agy-statusline-relay.sh` into `data/agy-quota.json`, enabled with `node scripts/install-agy-quota-relay.mjs`; the local language-server probe is only a fallback, and on AGY 1.2.7 it is observed to be rejected for lacking a CSRF token.
+
 
 Install the permanent user service and desktop shortcut with:
 

@@ -1715,7 +1715,7 @@ function quotaWindowRow(label, quotaWindow) {
 
 function quotaStatusCopy(provider) {
   return {
-    "setup-required": "需要啟用資料 relay",
+    "setup-required": provider?.reason || "需要啟用資料 relay",
     waiting: provider?.reason || "等待第一筆資料",
     unavailable: provider?.reason || "目前無法讀取",
   }[provider?.status] || provider?.reason || "目前無法讀取";

@@ -138,6 +138,49 @@ function keepFutureWindows(provider, now = Date.now()) {
   return windows.fiveHour || windows.weekly ? { ...provider, windows } : null;
 }
 
+function keepFutureGroups(provider, now = Date.now()) {
+  if (!provider?.groups) return provider;
+  const groups = provider.groups.map((group) => keepFutureWindows(group, now)).filter(Boolean);
+  return groups.length ? { ...provider, groups } : null;
+}
+
+// AGY's status-line hook receives an official `quota` map keyed by bucket
+// (`gemini-5h`, `gemini-weekly`, `3p-5h`, `3p-weekly`). It needs no CSRF token,
+// so the relayed snapshot is preferred over probing the language server.
+export function parseAgyStatusline(payload, observedAt = new Date()) {
+  const quota = payload?.quota;
+  if (!quota || typeof quota !== "object") return null;
+  const bucketWindow = (bucket) => {
+    if (!bucket || typeof bucket !== "object") return null;
+    const seconds = Number(bucket.reset_in_seconds);
+    const resetsAt = bucket.reset_time
+      || (Number.isFinite(seconds) && seconds > 0
+        ? new Date(observedAt.getTime() + seconds * 1_000).toISOString()
+        : null);
+    return windowFromRemaining(bucket.remaining_fraction, resetsAt);
+  };
+  const groups = [
+    {
+      id: "gemini",
+      label: "Gemini",
+      windows: { fiveHour: bucketWindow(quota["gemini-5h"]), weekly: bucketWindow(quota["gemini-weekly"]) },
+    },
+    {
+      id: "thirdParty",
+      label: "Claude / GPT",
+      windows: { fiveHour: bucketWindow(quota["3p-5h"]), weekly: bucketWindow(quota["3p-weekly"]) },
+    },
+  ].filter((group) => group.windows.fiveHour || group.windows.weekly);
+  if (!groups.length) return null;
+  return {
+    status: "ready",
+    plan: typeof payload.plan_tier === "string" && payload.plan_tier ? payload.plan_tier : null,
+    observedAt: observedAt.toISOString(),
+    source: "AGY statusline",
+    groups,
+  };
+}
+
 export function parseAgyQuotaSummary(payload) {
   const groups = (payload?.response?.groups || []).map((group) => {
     const id = /claude|gpt/i.test(group.displayName || "") ? "thirdParty" : "gemini";
@@ -168,6 +211,7 @@ export class QuotaProvider {
     codexSessionsRoot = path.join(os.homedir(), ".codex", "sessions"),
     claudeSnapshotPath,
     claudeUsagePath = path.join(os.tmpdir(), "claude", "statusline-usage-cache.json"),
+    agySnapshotPath,
     runner = execFileAsync,
     fetcher = fetch,
     cacheMs = 30_000,
@@ -175,6 +219,7 @@ export class QuotaProvider {
     this.codexSessionsRoot = codexSessionsRoot;
     this.claudeSnapshotPath = claudeSnapshotPath;
     this.claudeUsagePath = claudeUsagePath;
+    this.agySnapshotPath = agySnapshotPath;
     this.runner = runner;
     this.fetcher = fetcher;
     this.cacheMs = cacheMs;
@@ -243,10 +288,26 @@ export class QuotaProvider {
     return portsByPid.values().next().value || [];
   }
 
+  async readAgySnapshot() {
+    if (!this.agySnapshotPath) return null;
+    try {
+      const [text, info] = await Promise.all([
+        readFile(this.agySnapshotPath, "utf8"),
+        stat(this.agySnapshotPath),
+      ]);
+      return keepFutureGroups(parseAgyStatusline(JSON.parse(text), info.mtime));
+    } catch {
+      return null;
+    }
+  }
+
   async readAgy() {
+    const snapshot = await this.readAgySnapshot();
+    if (snapshot) return snapshot;
     const ports = await this.discoverAgyPorts();
     if (!ports.length) return { status: "unavailable", reason: "目前沒有執行中的 AGY" };
     const endpoint = "/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary";
+    let csrfRequired = false;
     for (const port of ports) {
       try {
         const response = await this.fetcher(`http://127.0.0.1:${port}${endpoint}`, {
@@ -258,12 +319,29 @@ export class QuotaProvider {
           body: JSON.stringify({ forceRefresh: true }),
           signal: AbortSignal.timeout(2_500),
         });
+        // Observed on AGY 1.2.7: the language server requires a per-process CSRF
+        // token that is never exposed outside the process, so 401 means "use the relay".
+        if (response.status === 401) {
+          csrfRequired = true;
+          continue;
+        }
         if (!response.ok) continue;
         const parsed = parseAgyQuotaSummary(await response.json());
         if (parsed) return parsed;
       } catch {
         // Each AGY process exposes one HTTPS and one HTTP loopback port.
       }
+    }
+    if (csrfRequired) {
+      // With a relay path configured, a 401 only means no fresh snapshot has
+      // arrived yet (no AGY session has emitted a statusline since install/reset).
+      if (this.agySnapshotPath) {
+        return { status: "waiting", reason: "等待 AGY session 送出第一筆 statusline（若尚未安裝 relay，請執行 node scripts/install-agy-quota-relay.mjs）" };
+      }
+      return {
+        status: "setup-required",
+        reason: "AGY 本機額度服務需要 CSRF token；請執行 node scripts/install-agy-quota-relay.mjs 啟用 statusline relay",
+      };
     }
     return { status: "unavailable", reason: "AGY 本機額度服務暫時無法讀取" };
   }

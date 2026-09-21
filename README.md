@@ -46,6 +46,16 @@ bash scripts/install-user-service.sh
 
 安裝程式會建立並啟用 `pane-relay.service`，並在桌面與應用程式選單加入 **Pane Relay** 啟動器。這是與 Herdr 同一台機器上的 user-level systemd 部署；排程建立後可以關閉瀏覽器，Node.js 服務仍會持續執行。
 
+### Agent 額度來源
+
+額度浮球會顯示 Codex、Claude 與 AGY 的 5 小時與每週視窗。Codex 讀取 session 事件、Claude 讀取 usage 快取或 statusline，AGY 則需要啟用 statusline relay：
+
+```bash
+node scripts/install-agy-quota-relay.mjs
+```
+
+安裝程式會把 `~/.gemini/antigravity-cli/settings.json` 的 `statusLine` 指向 `deploy/agy-statusline-relay.sh`，並把原本的 statusline 指令保存在 `data/agy-statusline-upstream.json` 繼續轉發。relay 只把 AGY 官方推送給 status-line hook 的 JSON（含 `quota` 各 bucket）鏡射到 `data/agy-quota.json`，不需要 AGY 本機 language server 的 CSRF token（實測於 AGY 1.2.7 確認該服務會拒絕沒有 token 的請求）。新開的 AGY session 送出第一筆 statusline 後，額度就會出現。Claude 的對應指令是 `node scripts/install-claude-quota-relay.mjs`。
+
 ### 全域歷史搜尋
 
 Header 的「全域搜尋」不需要先選 pane，就能搜尋較早的對話。搜尋範圍如下：
@@ -142,6 +152,16 @@ bash scripts/install-user-service.sh
 The installer creates and enables `pane-relay.service`, then adds a **Pane Relay** launcher to the desktop and application menu.
 
 The Pane Relay service is the persistent deployment for the control center. It runs `src/server.js` as a user-level systemd service on the same machine as Herdr; the browser may close while scheduled jobs continue running.
+
+## Agent quota sources
+
+The quota bubble shows the five-hour and weekly windows for Codex, Claude, and AGY. Codex is read from session events and Claude from its usage cache or statusline; AGY requires the statusline relay:
+
+```bash
+node scripts/install-agy-quota-relay.mjs
+```
+
+The installer points the `statusLine` in `~/.gemini/antigravity-cli/settings.json` at `deploy/agy-statusline-relay.sh` and keeps the previous statusline command in `data/agy-statusline-upstream.json`, forwarding every payload to it. The relay mirrors the JSON that Antigravity CLI pushes to its status-line hook (including the official `quota` buckets) into `data/agy-quota.json`, so no CSRF token for the local language server is needed (observed on AGY 1.2.7: the service rejects untokened requests). Quota appears once a newly started AGY session emits its first statusline. The Claude counterpart is `node scripts/install-claude-quota-relay.mjs`.
 
 ## Global history search
 

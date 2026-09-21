@@ -22,6 +22,7 @@ const statePath = process.env.STATE_PATH || path.join(projectRoot, "data", "stat
 const defaultAttachmentRoot = process.env.ATTACHMENT_ROOT || path.join(projectRoot, "data", "attachments");
 const defaultClaudeQuotaPath = process.env.CLAUDE_QUOTA_PATH || path.join(projectRoot, "data", "claude-quota.json");
 const defaultClaudeUsagePath = process.env.CLAUDE_USAGE_PATH || path.join(os.tmpdir(), "claude", "statusline-usage-cache.json");
+const defaultAgyQuotaPath = process.env.AGY_QUOTA_PATH || path.join(projectRoot, "data", "agy-quota.json");
 const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 4317);
 
@@ -327,6 +328,7 @@ export async function createApplication({
   quotaProvider = new QuotaProvider({
     claudeSnapshotPath: defaultClaudeQuotaPath,
     claudeUsagePath: defaultClaudeUsagePath,
+    agySnapshotPath: defaultAgyQuotaPath,
   }),
   attachmentRoot = defaultAttachmentRoot,
   sessionResolver = resolvePaneSession,
