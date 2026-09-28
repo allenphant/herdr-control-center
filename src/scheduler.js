@@ -2,9 +2,19 @@ import { randomUUID } from "node:crypto";
 import {
   fingerprintFromAgent,
   fingerprintsEqual,
+  herdrErrorCode,
 } from "./herdr-client.js";
 
 const SETTLED_STATES = new Set(["idle", "done"]);
+const RECURRING = new Set(["daily", "weekly"]);
+
+function isRecurringJob(job) {
+  return RECURRING.has(job?.recurrence) && job?.deliveryMode !== "enter";
+}
+
+function isEnterJob(job) {
+  return job?.deliveryMode === "enter";
+}
 
 function promptForJob(job) {
   const attachments = Array.isArray(job.attachments) ? job.attachments : [];
@@ -22,6 +32,26 @@ export function nextOccurrence(isoDate, recurrence) {
   else if (recurrence === "weekly") date.setDate(date.getDate() + 7);
   else return null;
   return date.toISOString();
+}
+
+export function nextFutureOccurrence(isoDate, recurrence, now) {
+  let candidate = isoDate;
+  for (let index = 0; index < 1_000; index += 1) {
+    candidate = nextOccurrence(candidate, recurrence);
+    if (!candidate) return null;
+    if (new Date(candidate) > now) return candidate;
+  }
+  return null;
+}
+
+export function timingForOccurrence(scheduledFor, graceMinutes) {
+  return {
+    scheduledFor,
+    nextRunAt: scheduledFor,
+    retryUntil: new Date(
+      new Date(scheduledFor).getTime() + graceMinutes * 60_000,
+    ).toISOString(),
+  };
 }
 
 export class Scheduler {
@@ -104,8 +134,13 @@ export class Scheduler {
   }
 
   async dispatchUnlocked(jobId) {
-    const job = this.store.snapshot().jobs.find((item) => item.id === jobId);
+    let job = this.store.snapshot().jobs.find((item) => item.id === jobId);
     if (!job || !["scheduled", "deferred"].includes(job.status)) return null;
+
+    const retryUntil = new Date(job.retryUntil);
+    if (isRecurringJob(job) && !Number.isNaN(retryUntil.getTime()) && this.clock() > retryUntil) {
+      return this.skipMissedOccurrence(job, "錯過傳送時段（服務或電腦未執行）");
+    }
 
     await this.store.updateJob(job.id, {
       status: "dispatching",
@@ -113,24 +148,15 @@ export class Scheduler {
     });
 
     try {
-      const agent = await this.client.getAgent(job.sessionName, job.paneId);
-      const actualFingerprint = fingerprintFromAgent(agent);
-      if (!fingerprintsEqual(job.expectedFingerprint, actualFingerprint)) {
-        const message = "Pane 內的 agent session 已變更，已拒絕傳送";
-        const failed = await this.store.updateJob(job.id, {
-          status: "failed",
-          lastOutcome: message,
-          nextRunAt: null,
-        });
-        await this.record(job, "failed", message, {
-          expected: job.expectedFingerprint,
-          actual: actualFingerprint,
-        });
-        return failed;
+      const target = await this.resolveTarget(job);
+      if (target.detached) {
+        return this.detach(job, target.detached, target.details);
       }
+      const { agent } = target;
+      job = target.job;
 
       const state = agent.agent_status || "unknown";
-      if (job.dispatchMode === "settled" && !SETTLED_STATES.has(state)) {
+      if (!isEnterJob(job) && job.dispatchMode === "settled" && !SETTLED_STATES.has(state)) {
         return this.defer(job, state);
       }
 
@@ -139,19 +165,27 @@ export class Scheduler {
         return persisted || null;
       }
 
-      const attachments = Array.isArray(job.attachments) ? job.attachments : [];
-      await this.client.sendPrompt(
-        job.sessionName,
-        job.paneId,
-        promptForJob(job),
-        {
-          expectedFingerprint: job.expectedFingerprint,
-          baselineStateChangeSeq: agent.state_change_seq,
-          retryEnterOnStall: attachments.length > 0,
-        },
-      );
+      const enterOnly = isEnterJob(job);
+      if (enterOnly) {
+        await this.client.sendEnter(job.sessionName, job.paneId);
+      } else {
+        const attachments = Array.isArray(job.attachments) ? job.attachments : [];
+        await this.client.sendPrompt(
+          job.sessionName,
+          job.paneId,
+          promptForJob(job),
+          {
+            expectedFingerprint: job.expectedFingerprint,
+            baselineStateChangeSeq: agent.state_change_seq,
+            retryEnterOnStall: attachments.length > 0,
+          },
+        );
+      }
       const sentAt = this.clock().toISOString();
-      const following = nextOccurrence(job.scheduledFor, job.recurrence);
+      const following = enterOnly ? null : nextOccurrence(job.scheduledFor, job.recurrence);
+      const sentMessage = enterOnly
+        ? "已對原 pane 送出一次 Enter"
+        : "訊息已送達原 agent session";
       const patch = following
         ? {
             status: "scheduled",
@@ -166,10 +200,10 @@ export class Scheduler {
       const updated = await this.store.updateJob(job.id, {
         ...patch,
         lastRunAt: sentAt,
-        lastOutcome: "訊息已送達原 agent session",
+        lastOutcome: sentMessage,
         occurrenceCount: (job.occurrenceCount || 0) + 1,
       });
-      await this.record(job, "sent", "訊息已送達原 agent session", {
+      await this.record(job, "sent", sentMessage, {
         agentStatus: state,
         nextRunAt: following,
       });
@@ -186,10 +220,96 @@ export class Scheduler {
     }
   }
 
+  async resolveTarget(job) {
+    let agent = null;
+    try {
+      agent = await this.client.getAgent(job.sessionName, job.paneId);
+    } catch (error) {
+      if (herdrErrorCode(error) !== "agent_not_found") throw error;
+    }
+    const actual = agent ? fingerprintFromAgent(agent) : null;
+    if (agent && fingerprintsEqual(job.expectedFingerprint, actual)) {
+      return { agent, job };
+    }
+
+    const relocated = await this.findRelocatedAgent(job);
+    if (relocated) {
+      const updated = await this.store.updateJob(job.id, {
+        paneId: relocated.pane_id,
+        targetSnapshot: {
+          ...(job.targetSnapshot || {}),
+          tabId: relocated.tab_id || null,
+          workspaceId: relocated.workspace_id || null,
+          terminalTitle: relocated.terminal_title_stripped || job.targetSnapshot?.terminalTitle || null,
+        },
+      });
+      await this.record(job, "relocated", `原 pane 已不存在，已依對話指紋改送到 ${relocated.pane_id}`, {
+        from: job.paneId,
+        to: relocated.pane_id,
+      });
+      return { agent: relocated, job: updated };
+    }
+
+    return {
+      detached: agent
+        ? "原 pane 內已換成別的 agent session，等待重新綁定"
+        : "找不到原本的 pane（重開機後 pane 編號可能已改變），等待重新綁定",
+      details: { expected: job.expectedFingerprint, actual, paneId: job.paneId },
+    };
+  }
+
+  async findRelocatedAgent(job) {
+    if (typeof this.client.listAgents !== "function") return null;
+    let agents;
+    try {
+      agents = await this.client.listAgents(job.sessionName);
+    } catch {
+      return null;
+    }
+    const matches = (Array.isArray(agents) ? agents : []).filter((agent) =>
+      agent?.pane_id && fingerprintsEqual(job.expectedFingerprint, fingerprintFromAgent(agent)),
+    );
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  async detach(job, message, details = {}) {
+    const detached = await this.store.updateJob(job.id, {
+      status: "detached",
+      nextRunAt: null,
+      lastOutcome: message,
+    });
+    await this.record(job, "detached", message, details);
+    return detached;
+  }
+
+  async skipMissedOccurrence(job, reason) {
+    const following = nextFutureOccurrence(job.scheduledFor, job.recurrence, this.clock());
+    if (!following) {
+      const failed = await this.store.updateJob(job.id, {
+        status: "failed",
+        nextRunAt: null,
+        lastOutcome: reason,
+      });
+      await this.record(job, "failed", reason);
+      return failed;
+    }
+    const message = `${reason}，已跳到下一次`;
+    const updated = await this.store.updateJob(job.id, {
+      status: "scheduled",
+      ...timingForOccurrence(following, job.graceMinutes),
+      lastOutcome: message,
+    });
+    await this.record(job, "missed", message, { missed: job.scheduledFor, nextRunAt: following });
+    return updated;
+  }
+
   async defer(job, agentStatus) {
     const now = this.clock();
     const retryUntil = new Date(job.retryUntil);
     if (Number.isNaN(retryUntil.getTime()) || now >= retryUntil) {
+      if (isRecurringJob(job)) {
+        return this.skipMissedOccurrence(job, `等待 agent 就緒逾時（最後狀態為 ${agentStatus}）`);
+      }
       const message = `等待 agent 就緒逾時，最後狀態為 ${agentStatus}`;
       const failed = await this.store.updateJob(job.id, {
         status: "failed",

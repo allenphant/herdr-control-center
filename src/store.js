@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const EMPTY_STATE = Object.freeze({ version: 1, jobs: [], events: [], aliases: [] });
+const EMPTY_STATE = Object.freeze({ version: 1, jobs: [], events: [], aliases: [], messages: [] });
 
 function clone(value) {
   return structuredClone(value);
@@ -25,6 +25,7 @@ export class JsonStore {
         jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
         events: Array.isArray(parsed.events) ? parsed.events : [],
         aliases: Array.isArray(parsed.aliases) ? parsed.aliases : [],
+        messages: Array.isArray(parsed.messages) ? parsed.messages : [],
       };
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
@@ -100,6 +101,34 @@ export class JsonStore {
       state.events.unshift(event);
       state.events = state.events.slice(0, 500);
       return event;
+    });
+  }
+
+  async createMessage(message) {
+    return this.mutate((state) => {
+      state.messages.unshift(message);
+      return message;
+    });
+  }
+
+  async updateMessage(id, patch) {
+    return this.mutate((state) => {
+      const index = state.messages.findIndex((message) => message.id === id);
+      if (index === -1) return null;
+      state.messages[index] = {
+        ...state.messages[index],
+        ...patch,
+        updatedAt: new Date().toISOString(),
+      };
+      return state.messages[index];
+    });
+  }
+
+  async deleteMessage(id) {
+    return this.mutate((state) => {
+      const before = state.messages.length;
+      state.messages = state.messages.filter((message) => message.id !== id);
+      return state.messages.length !== before;
     });
   }
 

@@ -200,6 +200,104 @@ test("POST /api/jobs captures the live pane conversation fingerprint", async () 
   }
 });
 
+test("POST /api/jobs creates an Enter-only one-shot without retaining text", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "pane-relay-enter-job-"));
+  const store = new JsonStore(path.join(directory, "state.json"));
+  const entered = [];
+  const client = {
+    async getAgent() {
+      return { ...agent, agent_status: "working" };
+    },
+    async sendEnter(sessionName, paneId) {
+      entered.push({ sessionName, paneId });
+    },
+    async sendPrompt() {
+      throw new Error("Enter-only jobs must not call prompt");
+    },
+  };
+  const app = await createApplication({ client, store });
+  const address = await app.listen(0, "127.0.0.1");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/api/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionName: "default",
+        paneId: "w1:p3",
+        label: "Project",
+        deliveryMode: "enter",
+        message: "這段文字絕不應被保存或送出",
+        scheduledFor: new Date(Date.now() + 60_000).toISOString(),
+        recurrence: "once",
+        dispatchMode: "settled",
+        graceMinutes: 360,
+        expectedFingerprint: agent.agent_session,
+      }),
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 201);
+    assert.equal(payload.job.deliveryMode, "enter");
+    assert.equal(payload.job.message, "");
+    assert.equal(payload.job.recurrence, "once");
+    assert.equal(payload.job.dispatchMode, "exact");
+    assert.equal(payload.job.graceMinutes, 1);
+
+    await store.updateJob(payload.job.id, {
+      nextRunAt: new Date(Date.now() - 1_000).toISOString(),
+    });
+    await app.scheduler.tick();
+
+    assert.deepEqual(entered, [{ sessionName: "default", paneId: "w1:p3" }]);
+    assert.equal(app.store.snapshot().jobs[0].status, "sent");
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/jobs rejects attachments and recurrence for an Enter-only job", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "pane-relay-enter-invalid-"));
+  const store = new JsonStore(path.join(directory, "state.json"));
+  const client = { async getAgent() { return agent; } };
+  const app = await createApplication({ client, store });
+  const address = await app.listen(0, "127.0.0.1");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const base = {
+    sessionName: "default",
+    paneId: "w1:p3",
+    deliveryMode: "enter",
+    scheduledFor: new Date(Date.now() + 60_000).toISOString(),
+    expectedFingerprint: agent.agent_session,
+  };
+
+  try {
+    const recurrenceResponse = await fetch(`${baseUrl}/api/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...base, recurrence: "daily" }),
+    });
+    assert.equal(recurrenceResponse.status, 400);
+    assert.match((await recurrenceResponse.json()).error, /不能設定重複/);
+
+    const attachmentResponse = await fetch(`${baseUrl}/api/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...base,
+        attachments: [{ id: "not-allowed", name: "screen.png" }],
+      }),
+    });
+    assert.equal(attachmentResponse.status, 400);
+    assert.match((await attachmentResponse.json()).error, /不能附加圖片/);
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("POST /api/aliases binds a local name to the verified conversation fingerprint", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "pane-relay-alias-"));
   const store = new JsonStore(path.join(directory, "state.json"));
@@ -639,6 +737,137 @@ test("cancel cannot overtake an in-progress pane delivery", async () => {
     await app.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+async function withApp(client, run) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "pane-relay-queue-"));
+  const store = new JsonStore(path.join(directory, "state.json"));
+  const app = await createApplication({ client, store });
+  const address = await app.listen(0, "127.0.0.1");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const call = async (method, pathname, body) => {
+    const response = await fetch(`${baseUrl}${pathname}`, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return { status: response.status, payload: await response.json() };
+  };
+  try {
+    await run({ app, store, call });
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+test("saved message library supports create, update and delete through the API", async () => {
+  const client = {
+    async getAgent() { return agent; },
+    async listTopology() { return { sessions: [], discoveredAt: new Date().toISOString() }; },
+  };
+  await withApp(client, async ({ store, call }) => {
+    const empty = await call("POST", "/api/messages", { title: "空白", message: "   " });
+    assert.equal(empty.status, 400);
+
+    const created = await call("POST", "/api/messages", { title: "每日接續", message: "請接續原本工作" });
+    assert.equal(created.status, 201);
+    const id = created.payload.message.id;
+
+    const state = await call("GET", "/api/state");
+    assert.equal(state.payload.messages[0].title, "每日接續");
+
+    const updated = await call("PUT", `/api/messages/${id}`, { title: "每日接續", message: "請繼續並整理結果" });
+    assert.equal(updated.status, 200);
+    assert.equal(store.snapshot().messages[0].message, "請繼續並整理結果");
+
+    assert.equal((await call("DELETE", `/api/messages/${id}`)).status, 200);
+    assert.equal((await call("DELETE", `/api/messages/${id}`)).status, 404);
+    assert.equal(store.snapshot().messages.length, 0);
+  });
+});
+
+function detachedJob(overrides = {}) {
+  return {
+    id: "job-detached",
+    label: "Old pane",
+    sessionName: "default",
+    paneId: "w1:p0",
+    deliveryMode: "prompt",
+    message: "hi",
+    recurrence: "daily",
+    dispatchMode: "settled",
+    graceMinutes: 360,
+    expectedFingerprint: { agent: "codex", kind: "id", source: "herdr:codex", value: "gone-session" },
+    status: "detached",
+    scheduledFor: "2026-09-24T22:00:00.000Z",
+    nextRunAt: null,
+    retryUntil: "2026-09-25T04:00:00.000Z",
+    occurrenceCount: 2,
+    createdAt: "2026-09-22T00:00:00.000Z",
+    updatedAt: "2026-09-28T05:34:47.798Z",
+    ...overrides,
+  };
+}
+
+test("rebind moves a detached recurring job to a verified pane at its next future occurrence", async () => {
+  const client = {
+    async getAgent() { return agent; },
+    async listTopology() { return { sessions: [], discoveredAt: new Date().toISOString() }; },
+  };
+  await withApp(client, async ({ store, call }) => {
+    await store.createJob(detachedJob());
+
+    const stale = await call("POST", "/api/jobs/job-detached/action", {
+      action: "rebind",
+      sessionName: "default",
+      paneId: "w1:p3",
+      expectedFingerprint: { ...agent.agent_session, value: "someone-else" },
+    });
+    assert.equal(stale.status, 409);
+    assert.equal(store.snapshot().jobs[0].status, "detached");
+
+    const sendNow = await call("POST", "/api/jobs/job-detached/action", { action: "send-now" });
+    assert.equal(sendNow.status, 409);
+
+    const rebound = await call("POST", "/api/jobs/job-detached/action", {
+      action: "rebind",
+      sessionName: "default",
+      paneId: "w1:p3",
+      expectedFingerprint: agent.agent_session,
+    });
+    assert.equal(rebound.status, 200);
+    const job = rebound.payload.job;
+    assert.equal(job.status, "scheduled");
+    assert.equal(job.paneId, "w1:p3");
+    assert.equal(job.expectedFingerprint.value, "conversation-123");
+    assert.ok(new Date(job.nextRunAt) > new Date());
+    assert.equal(new Date(job.nextRunAt).getUTCHours(), 22);
+    assert.equal(job.recurrence, "daily");
+    assert.equal(store.snapshot().events[0].type, "rebound");
+  });
+});
+
+test("rebind of an overdue one-shot job pauses it instead of sending immediately", async () => {
+  const client = {
+    async getAgent() { return agent; },
+    async listTopology() { return { sessions: [], discoveredAt: new Date().toISOString() }; },
+  };
+  await withApp(client, async ({ store, call }) => {
+    await store.createJob(detachedJob({ recurrence: "once" }));
+    const rebound = await call("POST", "/api/jobs/job-detached/action", {
+      action: "rebind",
+      sessionName: "default",
+      paneId: "w1:p3",
+      expectedFingerprint: agent.agent_session,
+    });
+    assert.equal(rebound.status, 200);
+    assert.equal(rebound.payload.job.status, "paused");
+    assert.equal(rebound.payload.job.nextRunAt, null);
+
+    const canceled = await call("POST", "/api/jobs/job-detached/action", { action: "cancel" });
+    assert.equal(canceled.status, 200);
+  });
 });
 
 // fetch() silently drops a custom Host (and Origin) header, so a forged one needs node:http

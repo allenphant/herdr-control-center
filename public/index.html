@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#eff1ec" />
     <title>Pane Relay</title>
-    <link rel="stylesheet" href="/styles.css?v=23" />
-    <script type="module" src="/app.js?v=23"></script>
+    <link rel="stylesheet" href="/styles.css?v=28" />
+    <script type="module" src="/app.js?v=28"></script>
   </head>
   <body>
     <!--
@@ -30,6 +30,11 @@
         <button class="button button-quiet" id="open-global-conversation-search" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
           全域搜尋
+        </button>
+        <button class="button button-quiet resource-button" id="open-resource-monitor" type="button" aria-haspopup="dialog" aria-controls="resource-dialog">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19V3" /></svg>
+          系統資源
+          <span class="resource-button-dot" id="resource-button-dot" aria-hidden="true"></span>
         </button>
         <div class="service-state" id="service-state" role="status">
           <span class="state-indicator" aria-hidden="true"></span>
@@ -65,6 +70,95 @@
         </div>
       </section>
     </div>
+
+    <dialog class="resource-dialog" id="resource-dialog" aria-labelledby="resource-dialog-title">
+      <div class="resource-sheet">
+        <header class="resource-heading">
+          <div>
+            <div class="resource-title-line">
+              <h2 id="resource-dialog-title">系統資源</h2>
+              <span class="resource-status-badge" id="resource-status-badge">讀取中</span>
+            </div>
+            <p>主機與 service cgroup 的唯讀快照</p>
+          </div>
+          <div class="resource-heading-actions">
+            <span class="resource-read-at" id="resource-read-at">尚未更新</span>
+            <button class="button button-quiet" id="refresh-resources" type="button">更新</button>
+            <button class="icon-button" id="close-resource-monitor" type="button" aria-label="關閉系統資源" title="關閉系統資源">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+            </button>
+          </div>
+        </header>
+        <div class="resource-body">
+          <section class="resource-host-card" aria-labelledby="resource-host-title">
+            <div class="resource-section-heading">
+              <div>
+                <h3 id="resource-host-title">主機總量</h3>
+                <p>可用記憶體低於 10% 或 Swap 高於 80% 時標記危險</p>
+              </div>
+              <span class="resource-status-badge" id="resource-host-status">讀取中</span>
+            </div>
+            <div class="resource-host-metrics" id="resource-host-metrics" aria-live="polite">
+              <div class="resource-loading">讀取 RAM、Swap 與負載…</div>
+            </div>
+            <div class="resource-pressure" id="resource-pressure"></div>
+          </section>
+
+          <section class="resource-overview-section" aria-labelledby="resource-overview-title">
+            <div class="resource-section-heading">
+              <div>
+                <h3 id="resource-overview-title">資源分布</h3>
+                <p>用圖形快速看 RAM 組成，以及三個主要 service 在主機中的占比</p>
+              </div>
+            </div>
+            <div class="resource-overview-grid" id="resource-overview" aria-live="polite">
+              <div class="resource-loading">整理資源分布…</div>
+            </div>
+          </section>
+
+          <section class="resource-workload-section" aria-labelledby="resource-workload-title">
+            <div class="resource-section-heading">
+              <div>
+                <h3 id="resource-workload-title">背景工作</h3>
+                <p>從主機熱點程序群組化，協助辨認輿情偵測、POM、Chrome 等長駐工作</p>
+              </div>
+              <span class="resource-status-badge" id="resource-workload-status">讀取中</span>
+            </div>
+            <div class="resource-workload-summary" id="resource-workload-summary" aria-live="polite">
+              <div class="resource-loading">等待程序取樣…</div>
+            </div>
+            <div class="resource-workload-panels" id="resource-workload-panels" aria-live="polite">
+              <div class="resource-loading">整理背景程序…</div>
+            </div>
+          </section>
+
+          <section class="resource-services-section" aria-labelledby="resource-services-title">
+            <div class="resource-section-heading">
+              <div>
+                <h3 id="resource-services-title">Service cgroup</h3>
+                <p>總量以 cgroup memory.current 計算；程序排行只顯示辨識線索</p>
+              </div>
+            </div>
+            <div class="resource-service-grid" id="resource-services" aria-live="polite">
+              <div class="resource-loading">讀取 service 資源…</div>
+            </div>
+          </section>
+
+          <section class="resource-alert-section" aria-labelledby="resource-alert-title">
+            <div class="resource-section-heading">
+              <div>
+                <h3 id="resource-alert-title">最近的資源訊號</h3>
+                <p>用來判斷主機壓力與 Herdr 是否曾被 OOM 連帶重啟</p>
+              </div>
+            </div>
+            <div class="resource-alerts" id="resource-alerts" aria-live="polite">
+              <div class="resource-loading">讀取訊號…</div>
+            </div>
+          </section>
+        </div>
+        <footer class="resource-footnote">這個面板只讀取資料，不會自動關閉或重啟任何程序。</footer>
+      </div>
+    </dialog>
 
     <main class="app-shell">
       <aside class="route-panel" aria-labelledby="route-title">
@@ -169,13 +263,26 @@
 
           <form id="schedule-form" class="schedule-form">
             <fieldset id="schedule-fields" disabled>
-            <label class="field-block">
+            <fieldset class="policy-fieldset delivery-fieldset" id="delivery-mode-fieldset">
+              <legend>排程動作</legend>
+              <label class="policy-option">
+                <input type="radio" name="deliveryMode" value="prompt" checked />
+                <span><strong>傳送接續訊息</strong><small>在指定時間把這段文字送到原本的 agent session。</small></span>
+              </label>
+              <label class="policy-option">
+                <input type="radio" name="deliveryMode" value="enter" />
+                <span><strong>只按一次 Enter</strong><small>只對目前 pane 送出一次 Enter，不重新輸入或拼接任何文字。</small></span>
+              </label>
+            </fieldset>
+
+            <label class="field-block" id="message-field">
               <span class="field-label">接續訊息</span>
               <textarea id="message" name="message" rows="6" maxlength="8000" required>請接續原本的工作，從目前進度繼續完成。完成後請整理結果與尚未解決的問題。</textarea>
               <span class="field-help"><span id="message-count">0</span> / 8000 字 · 草稿依 pane 暫存在這個瀏覽器分頁</span>
             </label>
+            <button class="button button-quiet save-to-library" id="save-to-library" type="button">把這則訊息存成常駐訊息</button>
 
-            <div class="attachment-field">
+            <div class="attachment-field" id="attachment-field">
               <div class="attachment-heading">
                 <div>
                   <span class="field-label">圖片附件</span>
@@ -190,7 +297,7 @@
             </div>
 
             <div class="time-grid">
-              <label class="field-block">
+              <label class="field-block" id="recurrence-field">
                 <span class="field-label">傳送時間</span>
                 <input id="scheduled-for" name="scheduledFor" type="datetime-local" required />
               </label>
@@ -215,7 +322,7 @@
               <span class="quota-quick-times" id="quota-quick-times"></span>
             </div>
 
-            <fieldset class="policy-fieldset">
+            <fieldset class="policy-fieldset" id="dispatch-policy-fieldset">
               <legend>傳送策略</legend>
               <label class="policy-option">
                 <input type="radio" name="dispatchMode" value="settled" checked />
@@ -227,7 +334,7 @@
               </label>
             </fieldset>
 
-            <label class="field-block grace-field">
+            <label class="field-block grace-field" id="grace-field">
               <span class="field-label">最長等待時間</span>
               <span class="number-with-unit">
                 <input id="grace-minutes" name="graceMinutes" type="number" min="1" max="1440" value="360" />
@@ -236,11 +343,16 @@
               <span class="field-help">只有「Agent 就緒後傳送」會使用這個設定。</span>
             </label>
 
-              <div class="safety-note">
-                <strong>安全條件</strong>
-                <p>若 pane 已關閉、移動，或 agent session 指紋不同，排程會失敗且不會輸入任何文字。</p>
-                <p>Herdr 目前沒有原子式條件投遞。系統會在呼叫 agent prompt 前立即核對指紋，但程序恰好在兩個動作間被替換時仍有極短的競態窗口。</p>
-              </div>
+            <div class="safety-note">
+              <strong>安全條件</strong>
+                <p>若 pane 已關閉、移動，或 agent session 指紋不同，排程會失敗且不會傳送任何內容。</p>
+                <p>訊息排程使用 agent prompt；Enter 排程使用 agent send-keys，只送出一個 Enter，不會讀取、重新輸入或拼接草稿文字。</p>
+            </div>
+            <div class="safety-note enter-only-note" id="enter-only-note" hidden>
+              <strong>只按一次 Enter</strong>
+              <p>指定時間到達時，系統只會對這個已驗證的 pane 按一次 Enter，讓輸入框當下已有的內容自行送出。</p>
+              <p>這是一次性動作，不等待 Agent 狀態，也不會固定間隔重複。</p>
+            </div>
             </fieldset>
           </form>
         </div>
@@ -256,12 +368,28 @@
             <h2 id="queue-title">投遞佇列</h2>
             <p id="queue-summary" role="status" aria-live="polite">讀取排程中</p>
           </div>
+        </div>
+        <div class="queue-toolbar">
           <div class="queue-tabs" role="group" aria-label="排程篩選">
             <button type="button" aria-pressed="true" data-job-filter="active">待執行</button>
             <button type="button" aria-pressed="false" data-job-filter="history">歷史</button>
+            <button type="button" aria-pressed="false" data-job-filter="library">常駐訊息</button>
           </div>
         </div>
         <div class="job-list" id="job-list"></div>
+        <section class="library-panel" id="library-panel" aria-labelledby="library-title" hidden>
+          <form class="library-form" id="library-form">
+            <h3 id="library-title">常駐訊息</h3>
+            <p class="field-help">存在 Pane Relay 服務的本機資料檔，重開機、換瀏覽器都還在。套用後再選時間建立排程。</p>
+            <input id="library-name" type="text" maxlength="120" placeholder="名稱（選填）" aria-label="常駐訊息名稱" />
+            <textarea id="library-message" rows="4" maxlength="8000" placeholder="要重複使用的訊息內容" aria-label="常駐訊息內容" required></textarea>
+            <div class="library-form-actions">
+              <button class="button button-quiet" id="library-cancel-edit" type="button" hidden>取消編輯</button>
+              <button class="button button-primary" id="library-save" type="submit">存入常駐訊息</button>
+            </div>
+          </form>
+          <div class="library-list" id="library-list"></div>
+        </section>
       </aside>
     </main>
 
@@ -280,7 +408,7 @@
           </button>
         </header>
         <div class="dialog-body">
-          <label class="field-block">
+          <label class="field-block" id="job-dialog-message-field">
             <span class="field-label">接續訊息</span>
             <textarea id="job-dialog-message" rows="10" maxlength="8000"></textarea>
           </label>

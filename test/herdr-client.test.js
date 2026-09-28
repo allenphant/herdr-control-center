@@ -76,6 +76,25 @@ test("sendPrompt targets the explicit Herdr session and pane without a shell", a
   ]);
 });
 
+test("sendEnter sends exactly one Enter to the explicit pane", async () => {
+  const calls = [];
+  const runner = async (binary, args) => {
+    calls.push({ binary, args });
+    return {
+      stdout: JSON.stringify({ id: "enter", result: { type: "ok" } }),
+      stderr: "",
+    };
+  };
+  const client = new HerdrClient({ binary: "/opt/herdr", runner });
+
+  await client.sendEnter("project-a", "w2:pM");
+
+  assert.deepEqual(calls, [{
+    binary: "/opt/herdr",
+    args: ["--session", "project-a", "agent", "send-keys", "w2:pM", "enter"],
+  }]);
+});
+
 test("sendPrompt recovers a stalled image draft with one verified Enter", async () => {
   const calls = [];
   const fingerprint = {

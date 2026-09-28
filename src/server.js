@@ -10,8 +10,9 @@ import {
   fingerprintsEqual,
 } from "./herdr-client.js";
 import { ConversationSearchService } from "./conversation-search.js";
-import { Scheduler } from "./scheduler.js";
+import { Scheduler, nextFutureOccurrence, timingForOccurrence } from "./scheduler.js";
 import { QuotaProvider } from "./quota-provider.js";
+import { ResourceMonitor } from "./resource-monitor.js";
 import { resolvePaneSession, sameRepairCandidate } from "./session-repair.js";
 import { JsonStore } from "./store.js";
 
@@ -250,8 +251,18 @@ function normalizePaneLayout(layout) {
   };
 }
 
+const EDITABLE_JOB_STATUSES = new Set(["scheduled", "deferred", "paused", "detached"]);
+
+function validateMessageInput(input) {
+  const title = cleanText(input?.title, 120);
+  const message = cleanText(input?.message, 8_000);
+  if (!message) throw new HttpError(400, "訊息內容不能空白");
+  return { title, message };
+}
+
 function validateJobInput(input) {
   const { sessionName, paneId } = validatePaneValues(input?.sessionName, input?.paneId);
+  const deliveryMode = input.deliveryMode === "enter" ? "enter" : "prompt";
   const message = cleanText(input.message, 8_000);
   const label = cleanText(input.label, 120);
   const recurrence = ["once", "daily", "weekly"].includes(input.recurrence)
@@ -264,7 +275,10 @@ function validateJobInput(input) {
   const scheduledFor = new Date(input.scheduledFor);
   const expectedFingerprint = input.expectedFingerprint;
 
-  if (!message) throw new HttpError(400, "請輸入要傳送的訊息");
+  if (deliveryMode === "prompt" && !message) throw new HttpError(400, "請輸入要傳送的訊息");
+  if (deliveryMode === "enter" && input.recurrence && input.recurrence !== "once") {
+    throw new HttpError(400, "只按一次 Enter 不能設定重複排程");
+  }
   if (Number.isNaN(scheduledFor.getTime())) throw new HttpError(400, "排程時間格式不正確");
   if (scheduledFor.getTime() < Date.now() - 5_000) throw new HttpError(400, "排程時間已經過去");
   if (
@@ -280,11 +294,12 @@ function validateJobInput(input) {
   return {
     sessionName,
     paneId,
-    message,
+    deliveryMode,
+    message: deliveryMode === "enter" ? "" : message,
     label,
-    recurrence,
-    dispatchMode,
-    graceMinutes,
+    recurrence: deliveryMode === "enter" ? "once" : recurrence,
+    dispatchMode: deliveryMode === "enter" ? "exact" : dispatchMode,
+    graceMinutes: deliveryMode === "enter" ? 1 : graceMinutes,
     scheduledFor: scheduledFor.toISOString(),
     expectedFingerprint: {
       agent: expectedFingerprint.agent || null,
@@ -330,6 +345,7 @@ export async function createApplication({
     claudeUsagePath: defaultClaudeUsagePath,
     agySnapshotPath: defaultAgyQuotaPath,
   }),
+  resourceMonitor = new ResourceMonitor(),
   attachmentRoot = defaultAttachmentRoot,
   sessionResolver = resolvePaneSession,
   conversationSearch = new ConversationSearchService(),
@@ -574,6 +590,9 @@ export async function createApplication({
 
   async function createJob(input) {
     const data = validateJobInput(input);
+    if (data.deliveryMode === "enter" && Array.isArray(input.attachments) && input.attachments.length) {
+      throw new HttpError(400, "只按一次 Enter 的排程不能附加圖片");
+    }
     const attachments = await verifyAttachments(input.attachments);
     const agent = await client.getAgent(data.sessionName, data.paneId);
     const expectedFingerprint = fingerprintFromAgent(agent);
@@ -646,7 +665,10 @@ export async function createApplication({
       const job = store.snapshot().jobs.find((item) => item.id === id);
       if (!job) return null;
 
-      if (action === "edit-message" && ["scheduled", "deferred", "paused"].includes(job.status)) {
+      if (action === "edit-message" && EDITABLE_JOB_STATUSES.has(job.status)) {
+        if (job.deliveryMode === "enter") {
+          throw new HttpError(409, "只按一次 Enter 的排程沒有訊息可編輯");
+        }
         const message = cleanText(input.message, 8_000);
         if (!message) throw new HttpError(400, "訊息內容不能空白");
         const updated = await store.updateJob(id, {
@@ -657,14 +679,20 @@ export async function createApplication({
         return updated;
       }
 
-      if (action === "edit-job" && ["scheduled", "deferred", "paused"].includes(job.status)) {
-        const message = cleanText(input.message, 8_000);
+      if (action === "edit-job" && EDITABLE_JOB_STATUSES.has(job.status)) {
+        const enterOnly = job.deliveryMode === "enter";
+        const message = enterOnly ? "" : cleanText(input.message, 8_000);
         const scheduledFor = new Date(input.scheduledFor);
         const currentScheduledFor = new Date(job.scheduledFor);
-        const attachments = input.attachments === undefined
-          ? (job.attachments || [])
-          : await verifyAttachments(input.attachments);
-        if (!message) throw new HttpError(400, "訊息內容不能空白");
+        if (enterOnly && Array.isArray(input.attachments) && input.attachments.length) {
+          throw new HttpError(400, "只按一次 Enter 的排程不能附加圖片");
+        }
+        const attachments = enterOnly
+          ? []
+          : input.attachments === undefined
+            ? (job.attachments || [])
+            : await verifyAttachments(input.attachments);
+        if (!enterOnly && !message) throw new HttpError(400, "訊息內容不能空白");
         if (Number.isNaN(scheduledFor.getTime())) {
           throw new HttpError(400, "排程時間格式不正確");
         }
@@ -691,7 +719,7 @@ export async function createApplication({
         return updated;
       }
 
-      if (action === "cancel" && ["scheduled", "deferred", "paused"].includes(job.status)) {
+      if (action === "cancel" && EDITABLE_JOB_STATUSES.has(job.status)) {
         const updated = await store.updateJob(id, {
           status: "canceled",
           nextRunAt: null,
@@ -726,6 +754,48 @@ export async function createApplication({
         return updated;
       }
 
+      if (action === "rebind" && job.status === "detached") {
+        const target = validatePaneValues(input.sessionName, input.paneId);
+        const agent = await client.getAgent(target.sessionName, target.paneId);
+        const liveFingerprint = fingerprintFromAgent(agent);
+        if (!liveFingerprint) {
+          throw new HttpError(409, "這個 pane 沒有可驗證的 agent session，無法重新綁定");
+        }
+        if (!fingerprintsEqual(input.expectedFingerprint, liveFingerprint)) {
+          throw new HttpError(409, "選取後 agent session 已變更，請重新選擇 pane 再綁定");
+        }
+        const now = new Date();
+        const recurring = ["daily", "weekly"].includes(job.recurrence) && job.deliveryMode !== "enter";
+        const upcoming = new Date(job.scheduledFor) > now
+          ? job.scheduledFor
+          : recurring
+            ? nextFutureOccurrence(job.scheduledFor, job.recurrence, now)
+            : null;
+        const updated = await store.updateJob(id, {
+          sessionName: target.sessionName,
+          paneId: target.paneId,
+          expectedFingerprint: liveFingerprint,
+          targetSnapshot: {
+            agent: agent.agent,
+            cwd: agent.cwd || null,
+            tabId: agent.tab_id || null,
+            terminalTitle: agent.terminal_title_stripped || null,
+            workspaceId: agent.workspace_id || null,
+          },
+          ...(upcoming
+            ? { status: "scheduled", ...timingForOccurrence(upcoming, job.graceMinutes) }
+            : { status: "paused", nextRunAt: null }),
+          lastOutcome: upcoming
+            ? `已重新綁定到 ${target.paneId}`
+            : `已重新綁定到 ${target.paneId}；原定時間已過，請修改時間或按「立刻傳送」`,
+        });
+        await activeScheduler.record(updated, "rebound", `已重新綁定到 ${target.paneId}`, {
+          from: job.paneId,
+          to: target.paneId,
+        });
+        return updated;
+      }
+
       if (action === "send-now" && ["scheduled", "deferred", "paused"].includes(job.status)) {
         const now = new Date().toISOString();
         const updated = await store.updateJob(id, {
@@ -740,6 +810,19 @@ export async function createApplication({
 
       throw new HttpError(409, "這個排程目前不能執行該操作");
     });
+  }
+
+  async function createSavedMessage(input) {
+    const data = validateMessageInput(input);
+    const now = new Date().toISOString();
+    return store.createMessage({ id: randomUUID(), ...data, createdAt: now, updatedAt: now });
+  }
+
+  async function updateSavedMessage(id, input) {
+    const data = validateMessageInput(input);
+    const updated = await store.updateMessage(id, data);
+    if (!updated) throw new HttpError(404, "找不到這則常駐訊息");
+    return updated;
   }
 
   async function apiHandler(request, response, url) {
@@ -763,6 +846,10 @@ export async function createApplication({
     if (request.method === "GET" && url.pathname === "/api/quota") {
       const force = url.searchParams.get("refresh") === "1";
       return sendJson(response, 200, await quotaProvider.getSnapshot({ force }));
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/resources") {
+      return sendJson(response, 200, await resourceMonitor.snapshot());
     }
 
     if (request.method === "GET" && url.pathname === "/api/pane-preview") {
@@ -847,6 +934,24 @@ export async function createApplication({
       return sendJson(response, 200, result);
     }
 
+    if (request.method === "POST" && url.pathname === "/api/messages") {
+      const body = await readJsonBody(request);
+      const message = await createSavedMessage(body);
+      return sendJson(response, 201, { message });
+    }
+
+    const messageMatch = url.pathname.match(/^\/api\/messages\/([^/]+)$/);
+    if (messageMatch && request.method === "PUT") {
+      const body = await readJsonBody(request);
+      const message = await updateSavedMessage(decodeURIComponent(messageMatch[1]), body);
+      return sendJson(response, 200, { message });
+    }
+    if (messageMatch && request.method === "DELETE") {
+      const removed = await store.deleteMessage(decodeURIComponent(messageMatch[1]));
+      if (!removed) return sendError(response, 404, "找不到這則常駐訊息");
+      return sendJson(response, 200, { ok: true });
+    }
+
     const repairMatch = url.pathname.match(/^\/api\/panes\/([^/]+)\/repair-session$/);
     if (request.method === "POST" && repairMatch) {
       const body = await readJsonBody(request);
@@ -914,6 +1019,7 @@ export async function createApplication({
     store,
     client,
     quotaProvider,
+    resourceMonitor,
     conversationSearch,
     listen(listenPort = port, listenHost = host) {
       activeScheduler.start();

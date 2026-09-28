@@ -14,6 +14,7 @@ const ui = {
   jobDialogAttachments: document.querySelector("#job-dialog-attachments"),
   jobDialogAttachmentInput: document.querySelector("#job-dialog-attachment-input"),
   jobDialogAttachmentList: document.querySelector("#job-dialog-attachment-list"),
+  jobDialogMessageField: document.querySelector("#job-dialog-message-field"),
   jobDialogMessage: document.querySelector("#job-dialog-message"),
   jobDialogQuickTime: document.querySelector("#job-dialog-quick-time"),
   jobDialogScheduledFor: document.querySelector("#job-dialog-scheduled-for"),
@@ -42,13 +43,44 @@ const ui = {
   composerActionbar: document.querySelector(".composer-actionbar"),
   composerHeading: document.querySelector(".composer-heading"),
   composerPanel: document.querySelector(".composer-panel"),
+  deliveryModeFieldset: document.querySelector("#delivery-mode-fieldset"),
+  messageField: document.querySelector("#message-field"),
   message: document.querySelector("#message"),
+  saveToLibrary: document.querySelector("#save-to-library"),
+  libraryPanel: document.querySelector("#library-panel"),
+  libraryForm: document.querySelector("#library-form"),
+  libraryName: document.querySelector("#library-name"),
+  libraryMessage: document.querySelector("#library-message"),
+  librarySave: document.querySelector("#library-save"),
+  libraryCancelEdit: document.querySelector("#library-cancel-edit"),
+  libraryList: document.querySelector("#library-list"),
   messageCount: document.querySelector("#message-count"),
+  attachmentField: document.querySelector("#attachment-field"),
+  recurrenceField: document.querySelector("#recurrence-field"),
+  dispatchPolicyFieldset: document.querySelector("#dispatch-policy-fieldset"),
+  graceField: document.querySelector("#grace-field"),
+  enterOnlyNote: document.querySelector("#enter-only-note"),
   openConversationSearch: document.querySelector("#open-conversation-search"),
   openGlobalConversationSearch: document.querySelector("#open-global-conversation-search"),
   paneFilter: document.querySelector("#pane-filter"),
   paneSearchPopover: document.querySelector("#pane-search-popover"),
   refreshTopology: document.querySelector("#refresh-topology"),
+  openResourceMonitor: document.querySelector("#open-resource-monitor"),
+  resourceButtonDot: document.querySelector("#resource-button-dot"),
+  resourceDialog: document.querySelector("#resource-dialog"),
+  closeResourceMonitor: document.querySelector("#close-resource-monitor"),
+  refreshResources: document.querySelector("#refresh-resources"),
+  resourceStatusBadge: document.querySelector("#resource-status-badge"),
+  resourceReadAt: document.querySelector("#resource-read-at"),
+  resourceHostStatus: document.querySelector("#resource-host-status"),
+  resourceHostMetrics: document.querySelector("#resource-host-metrics"),
+  resourcePressure: document.querySelector("#resource-pressure"),
+  resourceOverview: document.querySelector("#resource-overview"),
+  resourceWorkloadStatus: document.querySelector("#resource-workload-status"),
+  resourceWorkloadSummary: document.querySelector("#resource-workload-summary"),
+  resourceWorkloadPanels: document.querySelector("#resource-workload-panels"),
+  resourceServices: document.querySelector("#resource-services"),
+  resourceAlerts: document.querySelector("#resource-alerts"),
   routeList: document.querySelector("#route-list"),
   scheduleFields: document.querySelector("#schedule-fields"),
   scheduleForm: document.querySelector("#schedule-form"),
@@ -93,6 +125,8 @@ const appState = {
   selected: null,
   jobs: [],
   aliases: [],
+  messages: [],
+  libraryEditingId: null,
   agentFilter: "all",
   jobFilter: "active",
   collapsedWorkspaces: new Set(),
@@ -112,6 +146,8 @@ const appState = {
   editingAlias: false,
   herdrFocus: new Map(),
   quota: null,
+  resources: null,
+  loadingResources: false,
   conversationSearch: new ConversationRequestState(),
 };
 
@@ -128,13 +164,15 @@ let layoutObserver;
 const PREVIEW_STALE_MS = 55_000;
 const LAYOUT_STALE_MS = 18_000;
 
-const ACTIVE_STATUSES = new Set(["scheduled", "deferred", "dispatching", "paused"]);
+const ACTIVE_STATUSES = new Set(["scheduled", "deferred", "dispatching", "paused", "detached"]);
+const EDITABLE_STATUSES = new Set(["scheduled", "deferred", "paused", "detached"]);
 const DEFAULT_MESSAGE = "請接續原本的工作，從目前進度繼續完成。完成後請整理結果與尚未解決的問題。";
 const DRAFT_STORAGE_PREFIX = "pane-relay-draft:v1:";
 const STATUS_TEXT = {
   blocked: "blocked",
   canceled: "已取消",
   deferred: "等待中",
+  detached: "待重新綁定",
   dispatching: "傳送中",
   done: "done",
   edited: "已編輯",
@@ -421,12 +459,36 @@ function composerDraftKey(row = appState.selected) {
 function composerValues() {
   const form = new FormData(ui.scheduleForm);
   return {
+    deliveryMode: String(form.get("deliveryMode") || "prompt"),
     message: ui.message.value,
     scheduledFor: ui.scheduledFor.value,
     recurrence: String(form.get("recurrence") || "once"),
     dispatchMode: String(form.get("dispatchMode") || "settled"),
     graceMinutes: String(form.get("graceMinutes") || "360"),
   };
+}
+
+function currentDeliveryMode() {
+  return ui.scheduleForm.elements.deliveryMode?.value === "enter" ? "enter" : "prompt";
+}
+
+function updateDeliveryModeUI() {
+  const enterOnly = currentDeliveryMode() === "enter";
+  ui.messageField.hidden = enterOnly;
+  ui.attachmentField.hidden = enterOnly;
+  ui.recurrenceField.hidden = enterOnly;
+  ui.dispatchPolicyFieldset.hidden = enterOnly;
+  ui.graceField.hidden = enterOnly;
+  ui.enterOnlyNote.hidden = !enterOnly;
+  ui.saveToLibrary.hidden = enterOnly;
+  ui.message.disabled = enterOnly;
+  ui.message.required = !enterOnly;
+  ui.attachmentInput.disabled = enterOnly;
+  ui.scheduleForm.elements.recurrence.disabled = enterOnly;
+  for (const option of ui.scheduleForm.elements.dispatchMode) option.disabled = enterOnly;
+  ui.scheduleForm.elements.graceMinutes.disabled = enterOnly;
+  ui.scheduleSubmit.textContent = enterOnly ? "建立 Enter 排程" : "建立排程";
+  ui.sendImmediately.textContent = enterOnly ? "立即按 Enter" : "立刻傳送";
 }
 
 function saveComposerDraft() {
@@ -462,6 +524,7 @@ function loadComposerDraft(row) {
     const date = new Date(Date.now() + 305 * 60_000);
     date.setSeconds(0, 0);
     draft = {
+      deliveryMode: "prompt",
       message: DEFAULT_MESSAGE,
       scheduledFor: toDateTimeLocal(date),
       recurrence: "once",
@@ -469,6 +532,10 @@ function loadComposerDraft(row) {
       graceMinutes: "360",
       attachments: [],
     };
+  }
+  const deliveryMode = draft.deliveryMode === "enter" ? "enter" : "prompt";
+  for (const option of ui.scheduleForm.elements.deliveryMode) {
+    option.checked = option.value === deliveryMode;
   }
   ui.message.value = draft.message ?? DEFAULT_MESSAGE;
   ui.scheduledFor.value = draft.scheduledFor || "";
@@ -479,6 +546,7 @@ function loadComposerDraft(row) {
   ui.scheduleForm.elements.graceMinutes.value = draft.graceMinutes || "360";
   appState.attachments = draft.attachments || [];
   ui.attachmentInput.value = "";
+  updateDeliveryModeUI();
   updateMessageCount();
   renderAttachments();
 }
@@ -524,6 +592,446 @@ function toast(message, type = "info") {
 function formatBytes(value) {
   if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const RESOURCE_STATUS_TEXT = {
+  healthy: "正常",
+  warning: "注意",
+  critical: "危險",
+  unavailable: "無法讀取",
+};
+
+function formatResourceBytes(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  if (number >= 1024 ** 3) return `${(number / 1024 ** 3).toFixed(1)} GiB`;
+  if (number >= 1024 ** 2) return `${(number / 1024 ** 2).toFixed(1)} MiB`;
+  if (number >= 1024) return `${Math.round(number / 1024)} KiB`;
+  return `${Math.max(0, Math.round(number))} B`;
+}
+
+function resourceStatusText(status) {
+  return RESOURCE_STATUS_TEXT[status] || RESOURCE_STATUS_TEXT.unavailable;
+}
+
+function resourceStatusBadge(node, status) {
+  node.className = `resource-status-badge is-${status || "unavailable"}`;
+  node.textContent = resourceStatusText(status);
+}
+
+function resourceMetric(label, value, detail = "") {
+  return element("div", { className: "resource-metric" }, [
+    element("span", { className: "resource-metric-label", text: label }),
+    element("strong", { className: "resource-metric-value", text: value }),
+    ...(detail ? [element("span", { className: "resource-metric-detail", text: detail })] : []),
+  ]);
+}
+
+function resourcePercent(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${number.toFixed(number < 10 ? 1 : 0)}%` : "—";
+}
+
+function resourceLoadLabel(load, cpuCount) {
+  if (!Number.isFinite(Number(load?.one))) return "—";
+  return `${Number(load.one).toFixed(1)} / ${cpuCount || "?"} CPU`;
+}
+
+function resourcePressureValue(pressure) {
+  const value = Number(pressure?.some?.avg10);
+  return Number.isFinite(value) ? `${value.toFixed(1)}%` : "—";
+}
+
+function renderResourceHost(host) {
+  if (!host || host.status === "unavailable") {
+    ui.resourceHostMetrics.replaceChildren(element("div", {
+      className: "resource-loading is-error",
+      text: "主機資源暫時無法讀取",
+    }));
+    ui.resourcePressure.replaceChildren();
+    resourceStatusBadge(ui.resourceHostStatus, "unavailable");
+    return;
+  }
+
+  const usedPercent = host.totalBytes > 0 && host.usedBytes !== null
+    ? (host.usedBytes / host.totalBytes) * 100
+    : null;
+  ui.resourceHostMetrics.replaceChildren(
+    resourceMetric("RAM 使用", formatResourceBytes(host.usedBytes), resourcePercent(usedPercent)),
+    resourceMetric("RAM 可用", formatResourceBytes(host.availableBytes), resourcePercent(host.availablePercent)),
+    resourceMetric("Swap", formatResourceBytes(host.swapUsedBytes), host.swapTotalBytes > 0 ? resourcePercent(host.swapPercent) : "未啟用"),
+    resourceMetric("系統負載", resourceLoadLabel(host.load, host.cpuCount), `${Number(host.load?.five || 0).toFixed(1)} / ${Number(host.load?.fifteen || 0).toFixed(1)} · ${host.cpuCount || "?"} cores`),
+  );
+  ui.resourcePressure.replaceChildren(
+    element("span", { text: `Memory pressure ${resourcePressureValue(host.pressure?.memory)}` }),
+    element("span", { text: `CPU pressure ${resourcePressureValue(host.pressure?.cpu)}` }),
+    element("span", { text: `I/O pressure ${resourcePressureValue(host.pressure?.io)}` }),
+  );
+  resourceStatusBadge(ui.resourceHostStatus, host.status);
+}
+
+const RESOURCE_SERVICE_CHART_STYLES = Object.freeze({
+  herdr: { color: "var(--resource-herdr)", swatchClass: "is-herdr" },
+  "screenshot-editor": { color: "var(--resource-screenshot)", swatchClass: "is-screenshot" },
+  "pane-relay": { color: "var(--resource-pane-relay)", swatchClass: "is-pane-relay" },
+});
+const RESOURCE_SERVICE_FALLBACK_STYLES = [
+  { color: "var(--resource-herdr)", swatchClass: "is-herdr" },
+  { color: "var(--resource-screenshot)", swatchClass: "is-screenshot" },
+  { color: "var(--resource-pane-relay)", swatchClass: "is-pane-relay" },
+];
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
+function svgElement(tagName, attributes = {}) {
+  const node = document.createElementNS(SVG_NAMESPACE, tagName);
+  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
+  return node;
+}
+
+function resourceChartSegments(segments) {
+  return (segments || [])
+    .map((segment) => ({ ...segment, value: Number(segment.value) }))
+    .filter((segment) => Number.isFinite(segment.value) && segment.value > 0);
+}
+
+function createResourceDonut(label, segments, centerValue, centerLabel) {
+  const visibleSegments = resourceChartSegments(segments);
+  const total = visibleSegments.reduce((sum, segment) => sum + segment.value, 0);
+  const chart = element("div", { className: "resource-donut" });
+  const ariaLabel = visibleSegments.length
+    ? `${label}：${visibleSegments.map((segment) => `${segment.label} ${formatResourceBytes(segment.value)}`).join("、")}`
+    : `${label}：目前無資料`;
+  const svg = svgElement("svg", { viewBox: "0 0 160 160", role: "img", "aria-label": ariaLabel });
+  const group = svgElement("g", { transform: "rotate(-90 80 80)" });
+  const radius = 52;
+  const circumference = 2 * Math.PI * radius;
+  group.append(svgElement("circle", {
+    cx: 80,
+    cy: 80,
+    r: radius,
+    fill: "none",
+    stroke: "var(--surface-muted)",
+    "stroke-width": 20,
+  }));
+  let offset = 0;
+  for (const segment of visibleSegments) {
+    const length = total > 0 ? (segment.value / total) * circumference : 0;
+    group.append(svgElement("circle", {
+      cx: 80,
+      cy: 80,
+      r: radius,
+      fill: "none",
+      stroke: segment.color,
+      "stroke-width": 20,
+      "stroke-dasharray": `${length} ${circumference - length}`,
+      "stroke-dashoffset": -offset,
+      "stroke-linecap": "butt",
+    }));
+    offset += length;
+  }
+  svg.append(group);
+  chart.append(
+    svg,
+    element("div", { className: "resource-donut-center", "aria-hidden": "true" }, [
+      element("strong", { text: centerValue }),
+      element("span", { text: centerLabel }),
+    ]),
+  );
+  return chart;
+}
+
+function createResourceLegend(segments) {
+  const visibleSegments = resourceChartSegments(segments);
+  const total = visibleSegments.reduce((sum, segment) => sum + segment.value, 0);
+  if (!visibleSegments.length) return element("p", { className: "resource-empty-copy", text: "目前無可視化資料" });
+  return element("ul", { className: "resource-chart-legend" }, visibleSegments.map((segment) => {
+    const percent = total > 0 ? (segment.value / total) * 100 : 0;
+    return element("li", { className: "resource-chart-legend-item" }, [
+      element("span", { className: `resource-chart-swatch ${segment.swatchClass || "is-accent"}`, "aria-hidden": "true" }),
+      element("div", { className: "resource-chart-legend-copy" }, [
+        element("strong", { text: segment.label }),
+        element("span", { text: `${formatResourceBytes(segment.value)} · ${resourcePercent(percent)}` }),
+      ]),
+    ]);
+  }));
+}
+
+function createResourceChartPanel(title, subtitle, segments, centerValue, centerLabel) {
+  return element("article", { className: "resource-chart-panel" }, [
+    element("header", {}, [
+      element("h4", { text: title }),
+      element("span", { text: subtitle }),
+    ]),
+    element("div", { className: "resource-chart-content" }, [
+      createResourceDonut(title, segments, centerValue, centerLabel),
+      createResourceLegend(segments),
+    ]),
+  ]);
+}
+
+function resourceServiceChartStyle(service, index) {
+  return RESOURCE_SERVICE_CHART_STYLES[service.id] || RESOURCE_SERVICE_FALLBACK_STYLES[index % RESOURCE_SERVICE_FALLBACK_STYLES.length];
+}
+
+function renderResourceOverview(host, services) {
+  if (!host || host.status === "unavailable") {
+    ui.resourceOverview.replaceChildren(element("div", {
+      className: "resource-loading is-error",
+      text: "資源分布暫時無法讀取",
+    }));
+    return;
+  }
+
+  const totalBytes = Number(host.totalBytes);
+  const usedBytes = Math.max(0, Number(host.usedBytes) || 0);
+  const availableBytes = Math.max(0, Number(host.availableBytes) || 0);
+  const usedPercent = totalBytes > 0 ? (usedBytes / totalBytes) * 100 : null;
+  const memorySegments = [
+    { label: "已用 RAM", value: usedBytes, color: "var(--accent)", swatchClass: "is-accent" },
+    { label: "可用 RAM", value: availableBytes, color: "var(--surface-muted)", swatchClass: "is-muted" },
+  ];
+  const serviceSegments = (services || []).map((service, index) => {
+    const chartStyle = resourceServiceChartStyle(service, index);
+    return {
+      label: service.label,
+      value: Math.max(0, Number(service.memoryBytes) || 0),
+      color: chartStyle.color,
+      swatchClass: chartStyle.swatchClass,
+    };
+  });
+  const serviceTotalBytes = serviceSegments.reduce((sum, segment) => sum + segment.value, 0);
+  const otherBytes = Math.max(0, (totalBytes || usedBytes) - serviceTotalBytes);
+  if (otherBytes > 0) serviceSegments.push({ label: "其他／核心", value: otherBytes, color: "var(--line-strong)", swatchClass: "is-line" });
+  const serviceShare = totalBytes > 0 ? (serviceTotalBytes / totalBytes) * 100 : null;
+  ui.resourceOverview.replaceChildren(
+    createResourceChartPanel(
+      "RAM 組成",
+      "已用 vs 可用",
+      memorySegments,
+      resourcePercent(usedPercent),
+      "RAM 使用",
+    ),
+    createResourceChartPanel(
+      "Service 記憶體",
+      "目前占主機總量",
+      serviceSegments,
+      resourcePercent(serviceShare),
+      "三個 service",
+    ),
+  );
+}
+
+function resourceCpuText(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `CPU ${number.toFixed(1)}%` : "CPU 取樣中";
+}
+
+function createResourceWorkloadRow(group) {
+  return element("li", { className: "resource-workload-row" }, [
+    element("div", { className: "resource-workload-row-heading" }, [
+      element("strong", { text: group.label }),
+      element("span", { text: `${group.count} 程序 · RSS ${formatResourceBytes(group.rssBytes)}` }),
+    ]),
+    element("div", { className: "resource-workload-row-meta" }, [
+      element("span", { text: resourceCpuText(group.cpuPercent) }),
+      element("code", { text: group.commandLine || group.label }),
+    ]),
+  ]);
+}
+
+function createResourceWorkloadPanel(title, groups, emptyText) {
+  return element("article", { className: "resource-workload-panel" }, [
+    element("header", {}, [element("h4", { text: title })]),
+    groups?.length
+      ? element("ol", { className: "resource-workload-list" }, groups.map(createResourceWorkloadRow))
+      : element("p", { className: "resource-empty-copy", text: emptyText }),
+  ]);
+}
+
+function createResourceProcessList(title, processes, emptyText) {
+  return element("section", { className: "resource-workload-process-column" }, [
+    element("h5", { text: title }),
+    processes?.length
+      ? element("ol", { className: "resource-process-list" }, processes.map((process) =>
+        element("li", {}, [
+          element("div", { className: "resource-process-topline" }, [
+            element("strong", { text: `${process.name} · ${process.pid}` }),
+            element("span", { text: formatResourceBytes(process.rssBytes) }),
+          ]),
+          element("code", { text: process.commandLine }),
+          element("span", { className: "resource-process-cpu", text: resourceCpuText(process.cpuPercent) }),
+        ]),
+      ))
+      : element("p", { className: "resource-empty-copy", text: emptyText }),
+  ]);
+}
+
+function renderResourceWorkloads(workloads, host, error = "") {
+  if (error || !workloads) {
+    resourceStatusBadge(ui.resourceWorkloadStatus, "unavailable");
+    ui.resourceWorkloadSummary.replaceChildren(element("div", { className: "resource-loading is-error", text: error || "背景程序暫時無法讀取" }));
+    ui.resourceWorkloadPanels.replaceChildren();
+    return;
+  }
+
+  resourceStatusBadge(ui.resourceWorkloadStatus, workloads.status);
+  const topCpuGroup = workloads.topCpuGroups?.[0];
+  const topMemoryGroup = workloads.topMemoryGroups?.[0];
+  ui.resourceWorkloadSummary.replaceChildren(
+    resourceMetric("主機程序", workloads.processCount === null ? "—" : String(workloads.processCount), workloads.sampleReady ? "CPU 已完成第二次取樣" : "CPU 第一次取樣中"),
+    resourceMetric("CPU pressure", resourcePressureValue(host?.pressure?.cpu), "10 秒平均"),
+    resourceMetric("CPU 熱點", topCpuGroup?.label || "取樣中", topCpuGroup ? resourceCpuText(topCpuGroup.cpuPercent) : "等待第二次更新"),
+    resourceMetric("記憶體熱點", topMemoryGroup?.label || "—", topMemoryGroup ? formatResourceBytes(topMemoryGroup.rssBytes) : "目前無資料"),
+  );
+  ui.resourceWorkloadPanels.replaceChildren(
+    createResourceWorkloadPanel("CPU 熱點群組", workloads.topCpuGroups, "CPU 尚在取樣；約 10 秒後會出現排行"),
+    createResourceWorkloadPanel("記憶體熱點群組", workloads.topMemoryGroups, "目前沒有可列出的程序"),
+    element("details", { className: "resource-workload-process-details" }, [
+      element("summary", { text: "展開 PID 排行（協助定位實際程序）" }),
+      element("div", { className: "resource-workload-process-columns" }, [
+        createResourceProcessList("CPU 前幾名", workloads.topCpuProcesses, "CPU 尚在取樣"),
+        createResourceProcessList("記憶體前幾名", workloads.topMemoryProcesses, "目前沒有可列出的程序"),
+      ]),
+    ]),
+  );
+}
+
+function resourceServiceMemoryDetail(service, host) {
+  if (service.memoryLimitBytes > 0) {
+    return `${formatResourceBytes(service.memoryBytes)} / ${formatResourceBytes(service.memoryLimitBytes)}`;
+  }
+  return `${formatResourceBytes(service.memoryBytes)} / 主機 ${formatResourceBytes(host?.totalBytes)}`;
+}
+
+function createResourceServiceCard(service, host) {
+  const systemd = service.systemd;
+  const memoryBytes = service.memoryBytes || 0;
+  const memoryBase = service.memoryLimitBytes > 0 ? service.memoryLimitBytes : host?.totalBytes;
+  const memoryPercent = memoryBase > 0 ? Math.min(100, (memoryBytes / memoryBase) * 100) : 0;
+  const processes = service.topProcesses || [];
+  const processList = processes.length
+    ? element("ol", { className: "resource-process-list", "aria-label": `${service.label} 前幾名程序` }, processes.map((process) =>
+      element("li", {}, [
+        element("div", { className: "resource-process-topline" }, [
+          element("strong", { text: `${process.name} · ${process.pid}` }),
+          element("span", { text: formatResourceBytes(process.rssBytes) }),
+        ]),
+        element("code", { text: process.commandLine }),
+        element("span", { className: "resource-process-cpu", text: process.cpuPercent === null ? "CPU —" : `CPU ${process.cpuPercent.toFixed(1)}%` }),
+      ]),
+    ))
+    : element("p", { className: "resource-empty-copy", text: service.status === "unavailable" ? "找不到這個 service 的 cgroup" : "目前沒有可列出的程序" });
+
+  const systemdState = systemd
+    ? `${systemd.activeState || "unknown"} / ${systemd.subState || "unknown"}${systemd.result && systemd.result !== "success" ? ` · ${systemd.result}` : ""}`
+    : "systemd 狀態不可用";
+  const restartText = systemd ? `重啟 ${systemd.restarts || 0} 次` : "重啟 —";
+  const card = element("article", {
+    className: `resource-service-card is-${service.status || "unavailable"}`,
+    dataset: { resourceService: service.id },
+  });
+  card.append(
+    element("header", { className: "resource-service-heading" }, [
+      element("div", {}, [
+        element("h4", { text: service.label }),
+        element("span", { className: "resource-service-unit", text: service.unit }),
+      ]),
+      element("span", { className: "resource-status-badge", text: resourceStatusText(service.status), dataset: { status: service.status || "unavailable" } }),
+    ]),
+    element("div", { className: "resource-service-metrics" }, [
+      resourceMetric("目前記憶體", formatResourceBytes(memoryBytes), resourceServiceMemoryDetail(service, host)),
+      resourceMetric("峰值", formatResourceBytes(service.memoryPeakBytes)),
+      resourceMetric("程序", service.processCount === null ? "—" : String(service.processCount)),
+      resourceMetric("Tasks", service.tasks === null ? "—" : String(service.tasks)),
+    ]),
+    element("progress", {
+      className: "resource-memory-track",
+      value: memoryPercent,
+      max: 100,
+      "aria-label": `${service.label} 記憶體占比`,
+      "aria-valuetext": `${resourcePercent(memoryPercent)} · ${resourceServiceMemoryDetail(service, host)}`,
+    }),
+    element("div", { className: "resource-service-meta" }, [
+      element("span", { text: systemdState }),
+      element("span", { text: restartText }),
+      element("span", { text: service.cpuPercent === null ? "CPU —" : `CPU ${service.cpuPercent.toFixed(1)}%` }),
+    ]),
+    element("details", { className: "resource-process-details" }, [
+      element("summary", { text: "前幾名程序" }),
+      processList,
+    ]),
+  );
+  return card;
+}
+
+function renderResourceServices(services, host) {
+  ui.resourceServices.replaceChildren();
+  if (!services?.length) {
+    ui.resourceServices.append(element("div", { className: "resource-loading is-error", text: "沒有 service 資料" }));
+    return;
+  }
+  for (const service of services) ui.resourceServices.append(createResourceServiceCard(service, host));
+}
+
+function renderResourceAlerts(alerts, error = "") {
+  ui.resourceAlerts.replaceChildren();
+  if (error) {
+    ui.resourceAlerts.append(element("p", { className: "resource-alert is-warning", text: error }));
+    return;
+  }
+  if (!alerts?.length) {
+    ui.resourceAlerts.append(element("p", { className: "resource-alert is-healthy", text: "目前沒有 OOM 或 service 重啟警報" }));
+    return;
+  }
+  for (const alert of alerts) {
+    ui.resourceAlerts.append(element("p", {
+      className: `resource-alert is-${alert.level || "warning"}`,
+      text: alert.message,
+    }));
+  }
+}
+
+function renderResources() {
+  const data = appState.resources;
+  const status = data?.status || "unavailable";
+  resourceStatusBadge(ui.resourceStatusBadge, status);
+  ui.openResourceMonitor.setAttribute("aria-label", `開啟系統資源監控，目前狀態：${resourceStatusText(status)}`);
+  ui.openResourceMonitor.title = `系統資源：${resourceStatusText(status)}`;
+  ui.resourceButtonDot.className = `resource-button-dot is-${status}`;
+  ui.resourceReadAt.textContent = data?.readAt ? `更新於 ${formatDate(data.readAt, true)}` : "尚未更新";
+  if (data?.error) {
+    renderResourceHost(null);
+    renderResourceOverview(null, []);
+    renderResourceWorkloads(null, null, data.error);
+    renderResourceServices([], null);
+    renderResourceAlerts([], data.error);
+    return;
+  }
+  renderResourceHost(data?.host);
+  renderResourceOverview(data?.host, data?.services || []);
+  renderResourceWorkloads(data?.host?.workloads, data?.host);
+  renderResourceServices(data?.services || [], data?.host);
+  renderResourceAlerts(data?.alerts || []);
+}
+
+async function loadResources({ force = false, announce = false } = {}) {
+  if (appState.loadingResources) return;
+  if (!force && document.visibilityState !== "visible") return;
+  appState.loadingResources = true;
+  ui.refreshResources.disabled = true;
+  if (force) ui.refreshResources.textContent = "更新中";
+  try {
+    appState.resources = await requestJson("/api/resources");
+    renderResources();
+    if (announce) toast("系統資源已更新");
+  } catch (error) {
+    appState.resources = { error: `資源讀取失敗：${error.message}` };
+    renderResources();
+  } finally {
+    appState.loadingResources = false;
+    ui.refreshResources.disabled = false;
+    ui.refreshResources.textContent = "更新";
+  }
 }
 
 function renderAttachments() {
@@ -579,8 +1087,9 @@ function jobDialogAttachmentItemsFor(job) {
 
 function renderJobDialogAttachments(job, editable) {
   const items = appState.jobDialogAttachmentItems;
-  ui.jobDialogAttachments.hidden = !editable && !items.length;
-  ui.jobDialogAttachmentInput.disabled = !editable;
+  const enterOnly = job.deliveryMode === "enter";
+  ui.jobDialogAttachments.hidden = enterOnly || (!editable && !items.length);
+  ui.jobDialogAttachmentInput.disabled = enterOnly || !editable;
   ui.jobDialogAttachmentList.replaceChildren();
   for (const attachment of items) {
     const name = attachment.file?.name || attachment.uploaded?.name || "圖片";
@@ -657,7 +1166,7 @@ function addJobDialogAttachmentFiles(files) {
   }
   appState.jobDialogDirty = appState.jobDialogDirty || added > 0;
   const job = appState.jobs.find((item) => item.id === appState.activeJobId);
-  if (job) renderJobDialogAttachments(job, ["scheduled", "deferred", "paused"].includes(job.status));
+  if (job) renderJobDialogAttachments(job, EDITABLE_STATUSES.has(job.status));
   return added;
 }
 
@@ -731,6 +1240,7 @@ function clearComposer() {
   ui.message.value = "";
   ui.attachmentInput.value = "";
   setDateOffset(305);
+  updateDeliveryModeUI();
   updateMessageCount();
   renderAttachments();
   renderTarget();
@@ -1354,6 +1864,7 @@ function renderTarget() {
   ui.scheduleFields.disabled = !selected;
   ui.scheduleSubmit.disabled = !selected;
   ui.sendImmediately.disabled = !selected;
+  updateDeliveryModeUI();
   renderQuotaQuickTimes();
   if (!selected) {
     appState.editingAlias = false;
@@ -1938,7 +2449,8 @@ function jobStatusSummary(jobs) {
   const active = jobs.filter((job) => ACTIVE_STATUSES.has(job.status)).length;
   const sent = counts.sent || 0;
   const failed = counts.failed || 0;
-  return `${active} 待執行 / ${sent} 已送達 / ${failed} 失敗`;
+  const detached = counts.detached || 0;
+  return `${active} 待執行${detached ? `（${detached} 待重新綁定）` : ""} / ${sent} 已送達 / ${failed} 失敗`;
 }
 
 function jobDisplayName(job) {
@@ -1985,8 +2497,9 @@ function updateTriggerCountdowns() {
 }
 
 async function saveJobEdits(job, textarea, scheduledForInput) {
-  const message = textarea.value.trim();
-  if (!message) {
+  const enterOnly = job.deliveryMode === "enter";
+  const message = enterOnly ? "" : textarea.value.trim();
+  if (!enterOnly && !message) {
     toast("訊息內容不能空白", "error");
     textarea.focus();
     return;
@@ -2004,7 +2517,7 @@ async function saveJobEdits(job, textarea, scheduledForInput) {
     return;
   }
   try {
-    const attachments = await uploadPendingJobDialogAttachments();
+    const attachments = enterOnly ? [] : await uploadPendingJobDialogAttachments();
     await requestJson(`/api/jobs/${encodeURIComponent(job.id)}/action`, {
       method: "POST",
       body: JSON.stringify({
@@ -2017,13 +2530,14 @@ async function saveJobEdits(job, textarea, scheduledForInput) {
     appState.jobDialogDirty = false;
     ui.jobDialog.close();
     await loadState();
-    toast("訊息與傳送時間已更新");
+    toast(enterOnly ? "Enter 排程時間已更新" : "訊息與傳送時間已更新");
   } catch (error) {
     toast(error.message, "error");
   }
 }
 
 function recurrenceLabel(job) {
+  if (job.deliveryMode === "enter") return "只按一次 Enter";
   return {
     once: "只傳一次",
     daily: "每天重複",
@@ -2032,12 +2546,14 @@ function recurrenceLabel(job) {
 }
 
 function deliveryRuleLabel(job) {
+  if (job.deliveryMode === "enter") return "指定時間只送出一次 Enter，不等待 Agent 狀態";
   return job.dispatchMode === "settled"
     ? "到時間後，等 Agent 就緒再傳送"
     : "到時間立即嘗試傳送";
 }
 
 function graceLabel(job) {
+  if (job.deliveryMode === "enter") return "不等待、不重複";
   if (job.dispatchMode !== "settled") return "不等待";
   const minutes = Number(job.graceMinutes) || 0;
   if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60} 小時`;
@@ -2048,12 +2564,19 @@ function jobStateExplanation(job) {
   return {
     scheduled: triggerCountdown(job.nextRunAt, job.status),
     deferred: "Agent 尚未就緒，系統正在等待並重試",
-    dispatching: "正在核對對話並傳送",
+    detached: "找不到原本的對話 pane；在左側選好 pane 後開啟這裡重新綁定",
+    dispatching: job.deliveryMode === "enter" ? "正在核對對話並送出 Enter" : "正在核對對話並傳送",
     paused: "已暫停，不會自動傳送",
-    sent: "訊息已送達原本的對話",
-    failed: "傳送失敗；開啟查看原因",
+    sent: job.deliveryMode === "enter" ? "Enter 已送達原本的 pane" : "訊息已送達原本的對話",
+    failed: job.deliveryMode === "enter" ? "Enter 傳送失敗；開啟查看原因" : "傳送失敗；開啟查看原因",
     canceled: "這個排程已取消",
   }[job.status] || job.lastOutcome || "狀態更新中";
+}
+
+function jobActionDescription(job) {
+  return job.deliveryMode === "enter"
+    ? "到時間對原本的 pane 按一次 Enter"
+    : job.message;
 }
 
 function summaryItem(label, value) {
@@ -2069,23 +2592,26 @@ function renderJobDialog({ preserveEdits = false } = {}) {
     if (ui.jobDialog.open) ui.jobDialog.close();
     return;
   }
-  const editable = ["scheduled", "deferred", "paused"].includes(job.status);
+  const editable = EDITABLE_STATUSES.has(job.status);
+  const enterOnly = job.deliveryMode === "enter";
   const timeValue = job.nextRunAt || job.lastRunAt || job.scheduledFor;
   ui.jobDialogTitle.textContent = jobDisplayName(job);
   ui.jobDialogStatus.textContent = STATUS_TEXT[job.status] || job.status;
   ui.jobDialogStatus.dataset.status = job.status;
   ui.jobDialogTiming.textContent = `${jobStateExplanation(job)} · ${formatDate(timeValue)}`;
   if (!preserveEdits || !appState.jobDialogDirty) {
-    ui.jobDialogMessage.value = job.message;
+    ui.jobDialogMessage.value = enterOnly ? "" : job.message;
     ui.jobDialogScheduledFor.value = toDateTimeLocal(new Date(job.scheduledFor));
   }
-  ui.jobDialogMessage.readOnly = !editable;
+  ui.jobDialogMessageField.hidden = enterOnly;
+  ui.jobDialogMessage.readOnly = enterOnly || !editable;
   ui.jobDialogMessage.dataset.editable = String(editable);
   ui.jobDialogScheduledFor.disabled = !editable;
   ui.jobDialogScheduledFor.min = toDateTimeLocal(new Date());
   renderJobQuickTimes(job, editable);
   ui.jobDialogSummary.replaceChildren(
     summaryItem("執行方式", recurrenceLabel(job)),
+    summaryItem("動作", enterOnly ? "只按一次 Enter" : "傳送接續訊息"),
     summaryItem("傳送條件", deliveryRuleLabel(job)),
     summaryItem("最長等待", graceLabel(job)),
   );
@@ -2108,12 +2634,27 @@ function renderJobDialog({ preserveEdits = false } = {}) {
       dataset: { jobAction: "save-job" },
       on: { click: () => void saveJobEdits(job, ui.jobDialogMessage, ui.jobDialogScheduledFor) },
     }));
+    if (job.status === "detached") {
+      const selected = appState.selected;
+      ui.jobDialogActions.append(element("button", {
+        className: "job-action",
+        type: "button",
+        text: selected
+          ? `綁定到 ${paneDisplayName(selected.pane, selected.fingerprint)}`
+          : "先在左側選擇 pane 才能綁定",
+        disabled: selected ? null : "",
+        dataset: { focusKey: `job:${job.id}:rebind` },
+        on: { click: () => void rebindJob(job) },
+      }));
+      ui.jobDialogActions.append(jobActionButton("取消排程", "cancel", job, true));
+      return;
+    }
     if (job.status === "paused") {
       ui.jobDialogActions.append(jobActionButton("恢復排程", "resume", job));
     } else {
       ui.jobDialogActions.append(jobActionButton("暫停排程", "pause", job));
     }
-    ui.jobDialogActions.append(jobActionButton("立刻傳送", "send-now", job));
+    ui.jobDialogActions.append(jobActionButton(enterOnly ? "立即按 Enter" : "立刻傳送", "send-now", job));
     ui.jobDialogActions.append(jobActionButton("取消排程", "cancel", job, true));
   }
 }
@@ -2124,11 +2665,22 @@ function openJobDialog(job) {
   appState.jobDialogAttachmentItems = jobDialogAttachmentItemsFor(job);
   renderJobDialog();
   if (!ui.jobDialog.open) ui.jobDialog.showModal();
-  const editable = ["scheduled", "deferred", "paused"].includes(job.status);
-  queueMicrotask(() => editable ? ui.jobDialogMessage.focus() : ui.closeJobDialog.focus());
+  const editable = EDITABLE_STATUSES.has(job.status);
+  queueMicrotask(() => {
+    if (!editable) ui.closeJobDialog.focus();
+    else if (job.deliveryMode === "enter") ui.jobDialogScheduledFor.focus();
+    else ui.jobDialogMessage.focus();
+  });
 }
 
 function renderJobs() {
+  const libraryMode = appState.jobFilter === "library";
+  ui.jobList.hidden = libraryMode;
+  ui.libraryPanel.hidden = !libraryMode;
+  if (libraryMode) {
+    renderLibrary();
+    return;
+  }
   preserveFocus(ui.jobList);
   ui.jobList.replaceChildren();
   ui.queueSummary.textContent = jobStatusSummary(appState.jobs);
@@ -2161,6 +2713,7 @@ function renderJobs() {
       element("article", {
         className: "job-item",
         role: "button",
+        "data-status": job.status,
         tabindex: "0",
         "aria-label": `開啟 ${jobDisplayName(job)} 排程`,
         on: {
@@ -2184,7 +2737,7 @@ function renderJobs() {
           }),
           element("time", { className: "job-time", datetime: timeValue, text: formatDate(timeValue) }),
         ]),
-        element("p", { className: "job-message", text: job.message }),
+        element("p", { className: "job-message", text: jobActionDescription(job) }),
         ...(job.attachments?.length
           ? [element("span", { className: "job-attachment-count", text: `附 ${job.attachments.length} 張圖片` })]
           : []),
@@ -2251,6 +2804,11 @@ async function loadState() {
     const data = await requestJson("/api/state");
     const jobs = data.jobs || [];
     const aliases = data.aliases || [];
+    const messages = data.messages || [];
+    if (JSON.stringify(messages) !== JSON.stringify(appState.messages)) {
+      appState.messages = messages;
+      if (appState.jobFilter === "library") renderLibrary();
+    }
     if (JSON.stringify(jobs) !== JSON.stringify(appState.jobs)) {
       appState.jobs = jobs;
       renderJobs();
@@ -2281,6 +2839,147 @@ function requestConfirmation({ title, copy, acceptLabel = "確認" }) {
   });
 }
 
+async function rebindJob(job) {
+  const selected = appState.selected;
+  if (!selected?.fingerprint) {
+    toast("先在左側選擇要接手的 pane", "error");
+    return;
+  }
+  const targetName = paneDisplayName(selected.pane, selected.fingerprint);
+  const confirmed = await requestConfirmation({
+    title: `把排程綁定到「${targetName}」？`,
+    copy: "之後會傳送到這個 pane 目前的 agent session。重複排程會從下一個未到的時間繼續；原定時間已過的單次排程會先暫停，由你決定何時傳送。",
+    acceptLabel: "確認綁定",
+  });
+  if (!confirmed) return;
+  try {
+    await requestJson(`/api/jobs/${encodeURIComponent(job.id)}/action`, {
+      method: "POST",
+      body: JSON.stringify({
+        action: "rebind",
+        sessionName: selected.sessionName,
+        paneId: selected.pane.pane_id,
+        expectedFingerprint: selected.fingerprint,
+      }),
+    });
+    await loadState();
+    if (ui.jobDialog.open) renderJobDialog();
+    toast(`已綁定到 ${targetName}`);
+  } catch (error) {
+    toast(error.message, "error");
+    await loadTopology();
+  }
+}
+
+function libraryItemTitle(item) {
+  return item.title || item.message.split("\n")[0].slice(0, 60) || "未命名訊息";
+}
+
+function resetLibraryForm() {
+  appState.libraryEditingId = null;
+  ui.libraryName.value = "";
+  ui.libraryMessage.value = "";
+  ui.librarySave.textContent = "存入常駐訊息";
+  ui.libraryCancelEdit.hidden = true;
+}
+
+function editLibraryMessage(item) {
+  appState.libraryEditingId = item.id;
+  ui.libraryName.value = item.title || "";
+  ui.libraryMessage.value = item.message;
+  ui.librarySave.textContent = "更新這則訊息";
+  ui.libraryCancelEdit.hidden = false;
+  renderLibrary();
+  ui.libraryMessage.focus();
+}
+
+function applyLibraryMessage(item) {
+  if (!appState.selected) {
+    toast("先在左側選擇 pane，再套用常駐訊息", "error");
+    return;
+  }
+  if (currentDeliveryMode() === "enter") {
+    const promptOption = [...ui.scheduleForm.elements.deliveryMode].find((option) => option.value === "prompt");
+    if (promptOption) promptOption.checked = true;
+    updateDeliveryModeUI();
+  }
+  ui.message.value = item.message;
+  updateMessageCount();
+  saveComposerDraft();
+  ui.message.focus();
+  toast(`已套用「${libraryItemTitle(item)}」，設定時間後建立排程`);
+}
+
+async function deleteLibraryMessage(item) {
+  const confirmed = await requestConfirmation({
+    title: `刪除「${libraryItemTitle(item)}」？`,
+    copy: "只會刪除常駐訊息，已建立的排程不受影響。",
+    acceptLabel: "確認刪除",
+  });
+  if (!confirmed) return;
+  try {
+    await requestJson(`/api/messages/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+    if (appState.libraryEditingId === item.id) resetLibraryForm();
+    await loadState();
+    toast("常駐訊息已刪除");
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+async function saveLibraryMessage(title, message, editingId = null) {
+  const body = JSON.stringify({ title, message });
+  const saved = editingId
+    ? await requestJson(`/api/messages/${encodeURIComponent(editingId)}`, { method: "PUT", body })
+    : await requestJson("/api/messages", { method: "POST", body });
+  await loadState();
+  return saved;
+}
+
+function renderLibrary() {
+  preserveFocus(ui.libraryList);
+  ui.libraryList.replaceChildren();
+  if (!appState.messages.length) {
+    ui.libraryList.append(element("div", { className: "empty-state" }, [
+      element("strong", { text: "還沒有常駐訊息" }),
+      element("p", { text: "在上方輸入，或在排程訊息下方按「把這則訊息存成常駐訊息」。" }),
+    ]));
+    return;
+  }
+  for (const item of appState.messages) {
+    ui.libraryList.append(element("article", {
+      className: "library-item",
+      "data-editing": String(item.id === appState.libraryEditingId),
+    }, [
+      element("h4", { className: "library-item-title", text: libraryItemTitle(item) }),
+      element("p", { className: "library-item-message", text: item.message }),
+      element("div", { className: "library-actions" }, [
+        element("button", {
+          className: "job-action",
+          type: "button",
+          text: "套用到排程",
+          dataset: { focusKey: `library:${item.id}:apply` },
+          on: { click: () => applyLibraryMessage(item) },
+        }),
+        element("button", {
+          className: "job-action",
+          type: "button",
+          text: "編輯",
+          dataset: { focusKey: `library:${item.id}:edit` },
+          on: { click: () => editLibraryMessage(item) },
+        }),
+        element("button", {
+          className: "job-action is-danger",
+          type: "button",
+          text: "刪除",
+          dataset: { focusKey: `library:${item.id}:delete` },
+          on: { click: () => void deleteLibraryMessage(item) },
+        }),
+      ]),
+    ]));
+  }
+}
+
 async function runJobAction(job, action) {
   const confirmation = {
     cancel: {
@@ -2289,9 +2988,11 @@ async function runJobAction(job, action) {
       acceptLabel: "確認取消",
     },
     "send-now": {
-      title: "立刻傳送這則訊息？",
-      copy: "系統會先核對目前 pane 與原本的 agent session；若選擇等待就緒，Agent 忙碌時仍會延後。",
-      acceptLabel: "確認傳送",
+      title: job.deliveryMode === "enter" ? "立即對這個 pane 按一次 Enter？" : "立刻傳送這則訊息？",
+      copy: job.deliveryMode === "enter"
+        ? "系統只會送出一次 Enter，不會輸入、讀取或拼接任何文字，並會先核對原本的 agent session。"
+        : "系統會先核對目前 pane 與原本的 agent session；若選擇等待就緒，Agent 忙碌時仍會延後。",
+      acceptLabel: job.deliveryMode === "enter" ? "確認按 Enter" : "確認傳送",
     },
   }[action];
   if (confirmation && !await requestConfirmation(confirmation)) return;
@@ -2307,7 +3008,7 @@ async function runJobAction(job, action) {
       cancel: "排程已取消",
       pause: "排程已暫停",
       resume: "排程已恢復",
-      "send-now": "已排入立即傳送",
+      "send-now": job.deliveryMode === "enter" ? "已排入立即按 Enter" : "已排入立即傳送",
     }[action] || "操作完成");
   } catch (error) {
     toast(error.message, "error");
@@ -2319,6 +3020,8 @@ async function submitSchedule(event, { immediate = false } = {}) {
   if (!appState.selected) return;
 
   const form = new FormData(ui.scheduleForm);
+  const deliveryMode = String(form.get("deliveryMode") || "prompt");
+  const enterOnly = deliveryMode === "enter";
   const localTime = immediate ? new Date() : new Date(form.get("scheduledFor"));
   if (Number.isNaN(localTime.getTime())) {
     toast("請設定有效的傳送時間", "error");
@@ -2331,21 +3034,26 @@ async function submitSchedule(event, { immediate = false } = {}) {
     paneId: selected.pane.pane_id,
     expectedFingerprint: selected.fingerprint,
     label: paneDisplayName(selected.pane, selected.fingerprint),
-    message: form.get("message"),
+    deliveryMode,
+    message: enterOnly ? "" : form.get("message"),
     scheduledFor: localTime.toISOString(),
-    recurrence: immediate ? "once" : form.get("recurrence"),
-    dispatchMode: form.get("dispatchMode"),
-    graceMinutes: Number(form.get("graceMinutes")),
+    recurrence: enterOnly || immediate ? "once" : form.get("recurrence"),
+    dispatchMode: enterOnly ? "exact" : form.get("dispatchMode"),
+    graceMinutes: enterOnly ? 1 : Number(form.get("graceMinutes")),
   };
 
   ui.scheduleSubmit.disabled = true;
   ui.sendImmediately.disabled = true;
   const activeButton = immediate ? ui.sendImmediately : ui.scheduleSubmit;
-  activeButton.textContent = immediate ? "準備傳送" : "建立中";
+  activeButton.textContent = immediate
+    ? (enterOnly ? "準備按 Enter" : "準備傳送")
+    : "建立中";
   try {
-    if (appState.attachments.length) activeButton.textContent = "保存圖片中";
-    payload.attachments = await uploadPendingAttachments();
-    activeButton.textContent = immediate ? "排入傳送" : "建立中";
+    if (!enterOnly && appState.attachments.length) activeButton.textContent = "保存圖片中";
+    payload.attachments = enterOnly ? [] : await uploadPendingAttachments();
+    activeButton.textContent = immediate
+      ? (enterOnly ? "排入 Enter" : "排入傳送")
+      : "建立中";
     const created = await requestJson("/api/jobs", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -2357,7 +3065,9 @@ async function submitSchedule(event, { immediate = false } = {}) {
       });
     }
     await loadState();
-    toast(immediate ? "已排入立即傳送" : `已安排 ${formatDate(payload.scheduledFor)} 傳送`);
+    toast(immediate
+      ? (enterOnly ? "已排入立即按 Enter" : "已排入立即傳送")
+      : `已安排 ${formatDate(payload.scheduledFor)} ${enterOnly ? "按一次 Enter" : "傳送"}`);
     clearComposer();
   } catch (error) {
     toast(error.message, "error");
@@ -2366,14 +3076,25 @@ async function submitSchedule(event, { immediate = false } = {}) {
     ui.scheduleSubmit.disabled = !appState.selected;
     ui.scheduleSubmit.textContent = "建立排程";
     ui.sendImmediately.disabled = !appState.selected;
-    ui.sendImmediately.textContent = "立刻傳送";
+    ui.sendImmediately.textContent = currentDeliveryMode() === "enter" ? "立即按 Enter" : "立刻傳送";
   }
 }
 
 async function confirmImmediateSend() {
   if (!appState.selected || !ui.scheduleForm.reportValidity()) return;
   const target = paneDisplayName(appState.selected.pane, appState.selected.fingerprint);
-  const dispatchMode = new FormData(ui.scheduleForm).get("dispatchMode");
+  const form = new FormData(ui.scheduleForm);
+  const enterOnly = form.get("deliveryMode") === "enter";
+  if (enterOnly) {
+    const accepted = await requestConfirmation({
+      title: `立即對「${target}」按一次 Enter？`,
+      copy: "這個動作只會送出一次 Enter，不會輸入、讀取或拼接任何文字，並會先核對原本的 agent session。",
+      acceptLabel: "確認按 Enter",
+    });
+    if (accepted) await submitSchedule(null, { immediate: true });
+    return;
+  }
+  const dispatchMode = form.get("dispatchMode");
   const condition = dispatchMode === "settled"
     ? "如果 Agent 正在工作，系統會等它就緒後再送。"
     : "即使 Agent 正在工作，也會立即嘗試送出。";
@@ -2569,6 +3290,12 @@ function initializeQuotaFloat() {
 
 ui.scheduleForm.addEventListener("submit", submitSchedule);
 ui.sendImmediately.addEventListener("click", () => void confirmImmediateSend());
+ui.scheduleForm.querySelectorAll("input[name='deliveryMode']").forEach((input) => {
+  input.addEventListener("change", () => {
+    updateDeliveryModeUI();
+    saveComposerDraft();
+  });
+});
 ui.message.addEventListener("input", () => {
   updateMessageCount();
   saveComposerDraft();
@@ -2649,6 +3376,15 @@ ui.targetAliasForm.addEventListener("submit", (event) => {
 ui.targetAliasInput.addEventListener("keydown", (event) => event.stopPropagation());
 ui.refreshTopology.addEventListener("click", () => void loadTopology({ announce: true }));
 ui.refreshQuota.addEventListener("click", () => void loadQuota({ force: true, announce: true }));
+ui.openResourceMonitor.addEventListener("click", () => {
+  if (!ui.resourceDialog.open) ui.resourceDialog.showModal();
+  void loadResources({ force: true });
+});
+ui.closeResourceMonitor.addEventListener("click", () => ui.resourceDialog.close());
+ui.refreshResources.addEventListener("click", () => void loadResources({ force: true, announce: true }));
+ui.resourceDialog.addEventListener("click", (event) => {
+  if (event.target === ui.resourceDialog) ui.resourceDialog.close();
+});
 ui.closeQuota.addEventListener("click", () => {
   setQuotaOpen(false);
   ui.quotaOrb.focus();
@@ -2743,6 +3479,48 @@ document.querySelectorAll("[data-job-filter]").forEach((button) => {
   });
 });
 
+ui.libraryForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = ui.libraryMessage.value.trim();
+  if (!message) {
+    toast("訊息內容不能空白", "error");
+    ui.libraryMessage.focus();
+    return;
+  }
+  const editing = appState.libraryEditingId;
+  ui.librarySave.disabled = true;
+  try {
+    await saveLibraryMessage(ui.libraryName.value.trim(), message, editing);
+    resetLibraryForm();
+    renderLibrary();
+    toast(editing ? "常駐訊息已更新" : "已存入常駐訊息");
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    ui.librarySave.disabled = false;
+  }
+});
+ui.libraryCancelEdit.addEventListener("click", () => {
+  resetLibraryForm();
+  renderLibrary();
+});
+for (const field of [ui.libraryName, ui.libraryMessage]) {
+  field.addEventListener("keydown", (event) => event.stopPropagation());
+}
+ui.saveToLibrary.addEventListener("click", async () => {
+  const message = ui.message.value.trim();
+  if (!message) {
+    toast("訊息內容是空的，沒有東西可以存", "error");
+    return;
+  }
+  try {
+    await saveLibraryMessage("", message);
+    toast("已存入常駐訊息；在右側「常駐訊息」分頁管理");
+  } catch (error) {
+    toast(error.message, "error");
+  }
+});
+
 document.querySelectorAll("[data-route-view]").forEach((button) => {
   button.setAttribute("aria-pressed", String(button.dataset.routeView === appState.routeView));
   button.addEventListener("click", () => {
@@ -2758,11 +3536,13 @@ document.querySelectorAll("[data-route-view]").forEach((button) => {
 ui.timezoneLabel.textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || "local time";
 initializeTheme();
 initializeQuotaFloat();
+renderResources();
+updateDeliveryModeUI();
 setDateOffset(305);
 updateMessageCount();
 renderTarget();
 renderJobs();
-void Promise.all([loadTopology(), loadState(), loadFocusState(), loadQuota()]);
+void Promise.all([loadTopology(), loadState(), loadFocusState(), loadQuota(), loadResources()]);
 
 setInterval(() => void loadState(), 4_000);
 setInterval(() => void loadTopology(), 20_000);
@@ -2771,6 +3551,7 @@ setInterval(refreshVisibleLayouts, 20_000);
 setInterval(updateTriggerCountdowns, 15_000);
 setInterval(() => void loadFocusState(), 1_000);
 setInterval(() => void loadQuota(), 60_000);
+setInterval(() => void loadResources(), 15_000);
 setInterval(() => {
   for (const node of document.querySelectorAll("[data-quota-reset-at]")) {
     node.textContent = quotaResetLabel(node.dataset.quotaResetAt);

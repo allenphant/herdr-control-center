@@ -11,7 +11,7 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function herdrErrorCode(error) {
+export function herdrErrorCode(error) {
   for (const raw of [error?.details?.stderr, error?.message]) {
     if (!raw) continue;
     try {
@@ -178,11 +178,24 @@ export class HerdrClient {
     return unwrapResult(payload, "panes");
   }
 
+  async listAgents(sessionName) {
+    const payload = await this.run(
+      this.withSession(sessionName, ["agent", "list"]),
+    );
+    return unwrapResult(payload, "agents");
+  }
+
   async getAgent(sessionName, paneId) {
     const payload = await this.run(
       this.withSession(sessionName, ["agent", "get", paneId]),
     );
     return unwrapResult(payload, "agent");
+  }
+
+  async sendEnter(sessionName, paneId) {
+    return this.run(
+      this.withSession(sessionName, ["agent", "send-keys", paneId, "enter"]),
+    );
   }
 
   async getPaneProcessInfo(sessionName, paneId) {

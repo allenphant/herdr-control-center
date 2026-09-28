@@ -10,6 +10,7 @@ const screenshotPath = process.env.SCREENSHOT_PATH || "";
 const captureErrorState = process.env.CAPTURE_ERROR_STATE === "1";
 const captureJobDialog = process.env.CAPTURE_JOB_DIALOG === "1";
 const captureQuotaPanel = process.env.CAPTURE_QUOTA_PANEL === "1";
+const captureResourcePanel = process.env.CAPTURE_RESOURCE_PANEL === "1";
 const captureConversationSearch = process.env.CAPTURE_CONVERSATION_SEARCH === "1";
 const createJob = process.env.CREATE_JOB === "1";
 const testImagePath = process.env.TEST_IMAGE_PATH || "";
@@ -184,7 +185,17 @@ try {
   await find("#quota-panel:not([hidden])");
   await find("[data-quota-provider='codex'] .quota-window");
   await find("[data-quota-provider='claude'] .quota-window");
-  await find("[data-quota-provider='agy'] .quota-group");
+  const agyQuotaReady = await webdriver(`/session/${sessionId}/execute/sync`, {
+    method: "POST",
+    body: {
+      script: "return Boolean(document.querySelector('[data-quota-provider=\"agy\"] .quota-group'));",
+      args: [],
+    },
+  });
+  if (!agyQuotaReady) {
+    const agyUnavailable = await find("[data-quota-provider='agy'] .quota-unavailable");
+    if (!agyUnavailable) throw new Error("AGY quota card did not settle");
+  }
   await find("progress.quota-track[value][max='100']");
   const quotaOverlay = await webdriver(`/session/${sessionId}/execute/sync`, {
     method: "POST",
@@ -236,6 +247,59 @@ try {
   }
   const closeQuota = await find("#close-quota");
   await webdriver(`/session/${sessionId}/element/${closeQuota}/click`, { method: "POST", body: {} });
+  const resourceButton = await find("#open-resource-monitor");
+  await webdriver(`/session/${sessionId}/element/${resourceButton}/click`, { method: "POST", body: {} });
+  await find("#resource-dialog[open]");
+  await find("#resource-host-metrics .resource-metric", 20_000);
+  await find("#resource-overview .resource-chart-panel", 20_000);
+  await find("#resource-workload-summary .resource-metric", 20_000);
+  await find("#resource-workload-panels .resource-workload-panel", 20_000);
+  await find("#resource-services .resource-service-card", 20_000);
+  const resourceStatus = await webdriver(`/session/${sessionId}/execute/sync`, {
+    method: "POST",
+    body: {
+      script: "return {overall: document.querySelector('#resource-status-badge')?.textContent || '', host: document.querySelector('#resource-host-status')?.textContent || '', workload: document.querySelector('#resource-workload-status')?.textContent || ''};",
+      args: [],
+    },
+  });
+  if (
+    !resourceStatus.overall
+    || resourceStatus.overall === "讀取中"
+    || !resourceStatus.host
+    || resourceStatus.host === "讀取中"
+    || !resourceStatus.workload
+    || resourceStatus.workload === "讀取中"
+  ) {
+    throw new Error(`Resource monitor did not render a settled state: ${JSON.stringify(resourceStatus)}`);
+  }
+  const resourceLegend = await webdriver(`/session/${sessionId}/execute/sync`, {
+    method: "POST",
+    body: {
+      script: `
+        return [...document.querySelectorAll('.resource-chart-swatch')].map((swatch) => {
+          const rect = swatch.getBoundingClientRect();
+          return { width: rect.width, height: rect.height, background: getComputedStyle(swatch).backgroundColor };
+        });
+      `,
+      args: [],
+    },
+  });
+  if (!resourceLegend.some((swatch) => swatch.width >= 6 && swatch.height >= 6 && swatch.background !== "rgba(0, 0, 0, 0)")) {
+    throw new Error(`Resource chart legend swatches are not visible: ${JSON.stringify(resourceLegend)}`);
+  }
+  const serviceLegendColors = await webdriver(`/session/${sessionId}/execute/sync`, {
+    method: "POST",
+    body: {
+      script: "return [...document.querySelectorAll('#resource-overview .resource-chart-panel:nth-child(2) .resource-chart-swatch')].map((swatch) => getComputedStyle(swatch).backgroundColor);",
+      args: [],
+    },
+  });
+  if (serviceLegendColors.length >= 3 && new Set(serviceLegendColors).size !== serviceLegendColors.length) {
+    throw new Error(`Resource service legend colors are duplicated: ${JSON.stringify(serviceLegendColors)}`);
+  }
+  const closeResources = await find("#close-resource-monitor");
+  await webdriver(`/session/${sessionId}/element/${closeResources}/click`, { method: "POST", body: {} });
+  await find("#resource-dialog:not([open])");
   await webdriver(`/session/${sessionId}/execute/sync`, {
     method: "POST",
     body: {
@@ -493,6 +557,40 @@ try {
   await webdriver(`/session/${sessionId}/element/${closeConversation}/click`, { method: "POST", body: {} });
   const selectedAgentElement = await find("#target-agent");
   const selectedAgent = await webdriver(`/session/${sessionId}/element/${selectedAgentElement}/text`);
+  const enterMode = await find("#schedule-form input[name='deliveryMode'][value='enter']");
+  await webdriver(`/session/${sessionId}/element/${enterMode}/click`, { method: "POST", body: {} });
+  const enterModeState = await webdriver(`/session/${sessionId}/execute/sync`, {
+    method: "POST",
+    body: {
+      script: `
+        return {
+          messageHidden: document.querySelector('#message-field').hidden,
+          attachmentsHidden: document.querySelector('#attachment-field').hidden,
+          recurrenceHidden: document.querySelector('#recurrence-field').hidden,
+          policyHidden: document.querySelector('#dispatch-policy-fieldset').hidden,
+          enterNoteVisible: !document.querySelector('#enter-only-note').hidden,
+          immediateLabel: document.querySelector('#send-immediately').textContent,
+          scheduleLabel: document.querySelector('#schedule-submit').textContent,
+          messageDisabled: document.querySelector('#message').disabled,
+        };
+      `,
+      args: [],
+    },
+  });
+  if (
+    !enterModeState.messageHidden
+    || !enterModeState.attachmentsHidden
+    || !enterModeState.recurrenceHidden
+    || !enterModeState.policyHidden
+    || !enterModeState.enterNoteVisible
+    || enterModeState.immediateLabel !== "立即按 Enter"
+    || enterModeState.scheduleLabel !== "建立 Enter 排程"
+    || !enterModeState.messageDisabled
+  ) {
+    throw new Error(`Enter-only composer mode is incomplete: ${JSON.stringify(enterModeState)}`);
+  }
+  const promptMode = await find("#schedule-form input[name='deliveryMode'][value='prompt']");
+  await webdriver(`/session/${sessionId}/element/${promptMode}/click`, { method: "POST", body: {} });
   const immediateButton = await find("#send-immediately:not([disabled])");
   await webdriver(`/session/${sessionId}/execute/sync`, {
     method: "POST",
@@ -786,6 +884,12 @@ try {
       const orb = await find("#quota-orb");
       await webdriver(`/session/${sessionId}/element/${orb}/click`, { method: "POST", body: {} });
       await find("#quota-panel:not([hidden])");
+    }
+    if (captureResourcePanel) {
+      const resourceButton = await find("#open-resource-monitor");
+      await webdriver(`/session/${sessionId}/element/${resourceButton}/click`, { method: "POST", body: {} });
+      await find("#resource-dialog[open]");
+      await find("#resource-services .resource-service-card", 20_000);
     }
     if (captureConversationSearch) {
       const openSearch = await find("#open-conversation-search:not([disabled])");

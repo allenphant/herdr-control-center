@@ -12,11 +12,13 @@ Web 控制台不會只依 Agent 名稱路由。每次投遞都綁定選定的 He
 
 - 以空間或清單方式瀏覽 Herdr workspace、tab、pane，並查看即時終端預覽
 - 搜尋目前對話與全域歷史對話，支援 Claude、Codex、AGY、角色篩選、命中標記、分頁與前後文
-- 對精確 pane 建立接續排程，或立即傳送訊息
+- 對精確 pane 建立接續訊息排程、指定時間只按一次 Enter，或立即執行其中一種動作
 - 驗證 conversation fingerprint，並對 Codex／AGY 提供 fail-closed session repair
-- 編輯訊息、附加圖片、查看倒數、建立週期性排程與修改投遞佇列
+- 編輯訊息、附加圖片、查看倒數、建立週期性訊息排程與修改投遞佇列
 - 使用一般快速時間或綁定 Agent 的額度重置後快速時間
 - 儲存後自動關閉佇列編輯器，且 pane 顯示名稱會同步既有佇列紀錄
+- 常駐訊息庫：常用訊息存在服務端資料檔，重開機後仍在，可一鍵套用到排程
+- 重開機後 pane 編號改變時，排程依 conversation fingerprint 自動找回原對話；找不到就轉為「待重新綁定」，保留重複設定等你指定新 pane
 - 透過獨立的 [Screenshot Editor](https://github.com/allenphant/screenshot-editor) 使用桌面截圖標記流程
 - user-level `systemd` 服務與桌面捷徑
 - 透過 Herdr、SSH、Tailscale 與 Termius 進行手機及跨裝置操作
@@ -117,11 +119,13 @@ The web console does not route by agent name alone. Every delivery is bound to t
 
 - Spatial Herdr workspace, tab, and pane browser with live terminal previews
 - Current-conversation and global history search across Claude, Codex, and AGY with role filters, highlighted matches, pagination, and surrounding context
-- Exact-pane continuation scheduling and immediate delivery with confirmation
+- Exact-pane continuation scheduling, one-shot Enter scheduling, and immediate delivery with confirmation
 - Conversation fingerprint verification and fail-closed session repair
-- Message editing, image attachments, delivery countdowns, recurring schedules, and queue record editing
+- Message editing, image attachments, delivery countdowns, recurring message schedules, one-shot Enter jobs, and queue record editing
 - Codex, Claude, and AGY quota summaries with reset-time shortcuts
 - Queue editor support for changing scheduled messages/times, appending images, closing after save, and syncing pane aliases
+- A saved-message library stored in the service's state file, so reusable messages survive reboots and apply to the composer in one click
+- Reboot-resilient jobs: when pane IDs change, a job follows its conversation fingerprint to the new pane; otherwise it waits as "awaiting rebind" with its recurrence intact until you pick a pane
 - Optional desktop screenshot workflow through the standalone [Screenshot Editor](https://github.com/allenphant/screenshot-editor)
 - A user-level `systemd` service and desktop shortcut
 - Mobile and remote access through Herdr, SSH, Tailscale, and Termius
