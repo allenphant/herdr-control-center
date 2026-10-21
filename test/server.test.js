@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import http from "node:http";
 import test from "node:test";
 import { createApplication } from "../src/server.js";
 import { JsonStore } from "../src/store.js";
@@ -635,6 +636,97 @@ test("cancel cannot overtake an in-progress pane delivery", async () => {
     assert.equal(app.store.snapshot().jobs[0].status, "sent");
   } finally {
     releaseSend();
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// fetch() silently drops a custom Host (and Origin) header, so a forged one needs node:http
+function rawRequest(port, { method = "GET", path: requestPath = "/", headers = {}, body } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: "127.0.0.1", port, method, path: requestPath, headers, agent: false }, (res) => {
+      res.resume();
+      res.on("end", () => resolve(res.statusCode));
+    });
+    req.on("error", reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+// A web page on another site can reach 127.0.0.1 (plain cross-site POST, or DNS rebinding).
+test("requests with a foreign Host, a foreign Origin or a non-JSON body are refused", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "pane-relay-guard-"));
+  const store = new JsonStore(path.join(directory, "state.json"));
+  const app = await createApplication({ client: {}, store });
+  const address = await app.listen(0, "127.0.0.1");
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const port = address.port;
+    const ok = await fetch(`${base}/api/health`);
+    assert.equal(ok.status, 200);
+
+    // DNS rebinding: the attacker's name resolves to 127.0.0.1, so the Host is theirs
+    assert.equal(await rawRequest(port, { path: "/api/health", headers: { host: "evil.example" } }), 403);
+    assert.equal(await rawRequest(port, { path: "/", headers: { host: `evil.example:${port}` } }), 403);
+
+    // a page on another site posting to the service
+    const json = JSON.stringify({ query: "x" });
+    assert.equal(await rawRequest(port, {
+      method: "POST", path: "/api/conversation/global-search", body: json,
+      headers: { host: `127.0.0.1:${port}`, origin: "https://evil.example", "content-type": "application/json", "content-length": Buffer.byteLength(json) },
+    }), 403);
+
+    // text/plain is a "simple" cross-site request: no preflight, so it must not be accepted
+    const plain = JSON.stringify({ name: "x.png", data: "AAAA" });
+    assert.equal(await rawRequest(port, {
+      method: "POST", path: "/api/attachments", body: plain,
+      headers: { "content-type": "text/plain", "content-length": Buffer.byteLength(plain) },
+    }), 415);
+
+    // the page's own requests keep working: same Origin, JSON body
+    const own = await rawRequest(port, {
+      method: "POST", path: "/api/conversation/global-search", body: json,
+      headers: { host: `127.0.0.1:${port}`, origin: base, "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(json) },
+    });
+    assert.notEqual(own, 403);
+    assert.notEqual(own, 415);
+
+    // localhost under another port (an SSH tunnel)
+    assert.equal(await rawRequest(port, { path: "/api/health", headers: { host: "localhost:9999" } }), 200);
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("job input is checked with the same strict session and pane rules as the other endpoints", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "pane-relay-jobinput-"));
+  const store = new JsonStore(path.join(directory, "state.json"));
+  const app = await createApplication({ client: {}, store });
+  const address = await app.listen(0, "127.0.0.1");
+  const base = `http://127.0.0.1:${address.port}`;
+  const post = (body) => fetch(`${base}/api/jobs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const valid = {
+    sessionName: "main", paneId: "w1:p3", message: "hi",
+    scheduledFor: new Date(Date.now() + 60_000).toISOString(),
+    expectedFingerprint: { agent: "codex", kind: "id", source: "herdr:codex", value: "c-1" },
+  };
+  try {
+    for (const bad of [
+      { ...valid, sessionName: "--help" },
+      { ...valid, sessionName: "a b" },
+      { ...valid, paneId: "w1:p3 --flag" },
+      { ...valid, paneId: "-x:p1" },
+    ]) {
+      const res = await post(bad);
+      assert.equal(res.status, 400, JSON.stringify(bad));
+    }
+  } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });
   }
