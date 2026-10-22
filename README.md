@@ -81,7 +81,7 @@ Screenshot Editor 維護在獨立的 [Screenshot Editor repository](https://gith
 
 ### 安全模型
 
-Pane Relay 預設綁定 `127.0.0.1`，沒有內建網路驗證。不要直接使用 `HOST=0.0.0.0` 暴露服務；若要從其他裝置存取，請使用經驗證的 SSH tunnel 或私有網路 proxy。Pane 預覽與上傳圖片可能包含私有專案資訊。
+Pane Relay 預設綁定 `127.0.0.1`，沒有內建網路驗證。不要直接使用 `HOST=0.0.0.0` 暴露服務；若要從其他裝置存取，請使用經驗證的 SSH tunnel 或私有網路 proxy。Pane 預覽與上傳圖片可能包含私有專案資訊。 服務只接受 `Host` 為 `localhost`、`127.0.0.1` 或 `[::1]` 的請求（可用 `ALLOWED_HOSTS=name1,name2` 加入其他名稱），有 `Origin` 時必須與 `Host` 相同，且帶內容的請求必須是 `application/json`；這用來擋掉其他網站對本機服務的跨站請求與 DNS rebinding，不是登入驗證。
 
 Pane Relay 的執行狀態與上傳附件預設位於 `data/`，並刻意排除在 Git 之外。全域 conversation index 位於 `~/.cache/herdr-control-center/`；quota reader 也可能讀取 provider 自己的 statusline 或 usage cache。這些位置都可能包含私有專案或對話資料。
 
@@ -178,7 +178,7 @@ The screenshot editor is maintained in the standalone [Screenshot Editor reposit
 
 ## Security model
 
-Pane Relay binds to `127.0.0.1` by default and has no built-in network authentication. Do not expose it directly with `HOST=0.0.0.0`. For another device, use an authenticated SSH tunnel or a private-network proxy. Pane previews and uploaded images may contain private project information.
+Pane Relay binds to `127.0.0.1` by default and has no built-in network authentication. Do not expose it directly with `HOST=0.0.0.0`. For another device, use an authenticated SSH tunnel or a private-network proxy. Pane previews and uploaded images may contain private project information. The service only answers requests whose `Host` is `localhost`, `127.0.0.1` or `[::1]` (add other names with `ALLOWED_HOSTS=name1,name2`), requires an `Origin`, when present, to match the `Host`, and requires `application/json` for requests with a body. This blocks cross-site requests and DNS rebinding from other websites; it is not a login.
 
 Pane Relay runtime state and uploaded attachments live under `data/` by default and are intentionally excluded from Git. The global conversation index lives under `~/.cache/herdr-control-center/`; provider quota readers may also use their local statusline or usage caches. All of these locations may contain private project or conversation information.
 

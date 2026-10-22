@@ -52,6 +52,49 @@ function securityHeaders() {
   };
 }
 
+// The service has no login: it is protected by being reachable only from this machine's own pages.
+// A browser page from another site can still reach 127.0.0.1 (a plain cross-site POST, or DNS
+// rebinding, where the attacker's host name points at 127.0.0.1), so every request is checked for
+// the Host it was sent to, the Origin it came from, and a JSON content type on bodies.
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+export function hostName(hostHeader) {
+  if (typeof hostHeader !== "string" || !hostHeader) return null;
+  const value = hostHeader.trim().toLowerCase();
+  if (value.startsWith("[")) {
+    const end = value.indexOf("]");
+    return end === -1 ? null : value.slice(0, end + 1);
+  }
+  return value.split(":")[0] || null;
+}
+
+export function requestGuard(request, extraHosts = []) {
+  const allowed = new Set([...LOCAL_HOSTS, ...extraHosts.map((host) => host.trim().toLowerCase()).filter(Boolean)]);
+  const host = hostName(request.headers.host);
+  if (!host || !allowed.has(host)) return { status: 403, message: "不允許的 Host" };
+
+  const origin = request.headers.origin;
+  if (origin !== undefined) {
+    let originHost = null;
+    try {
+      const parsed = new URL(origin);
+      originHost = parsed.host.toLowerCase();
+    } catch {
+      return { status: 403, message: "不允許的 Origin" };
+    }
+    if (originHost !== String(request.headers.host).trim().toLowerCase()) {
+      return { status: 403, message: "不允許的 Origin" };
+    }
+  }
+
+  const hasBody = Number(request.headers["content-length"] || 0) > 0 || Boolean(request.headers["transfer-encoding"]);
+  if (hasBody && !["GET", "HEAD"].includes(request.method)) {
+    const type = String(request.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    if (type !== "application/json") return { status: 415, message: "請求內容必須是 application/json" };
+  }
+  return null;
+}
+
 function sendJson(response, status, payload) {
   response.writeHead(status, {
     ...securityHeaders(),
@@ -121,7 +164,7 @@ function previewLines(value) {
 function validatePaneTarget(url) {
   const sessionName = cleanText(url.searchParams.get("session"), 64);
   const paneId = cleanText(url.searchParams.get("pane"), 64);
-  if (!/^[a-z0-9._-]+$/i.test(sessionName)) {
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(sessionName)) {
     throw new HttpError(400, "Herdr session 格式不正確");
   }
   if (!/^w[^\s/:?#&]+:p[^\s/?#&]+$/i.test(paneId)) {
@@ -133,7 +176,7 @@ function validatePaneTarget(url) {
 function validatePaneValues(sessionValue, paneValue) {
   const sessionName = cleanText(sessionValue, 64);
   const paneId = cleanText(paneValue, 64);
-  if (!/^[a-z0-9._-]+$/i.test(sessionName)) {
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(sessionName)) {
     throw new HttpError(400, "Herdr session 格式不正確");
   }
   if (!/^w[^\s/:?#&]+:p[^\s/?#&]+$/i.test(paneId)) {
@@ -207,8 +250,7 @@ function normalizePaneLayout(layout) {
 }
 
 function validateJobInput(input) {
-  const sessionName = cleanText(input.sessionName, 64);
-  const paneId = cleanText(input.paneId, 64);
+  const { sessionName, paneId } = validatePaneValues(input?.sessionName, input?.paneId);
   const message = cleanText(input.message, 8_000);
   const label = cleanText(input.label, 120);
   const recurrence = ["once", "daily", "weekly"].includes(input.recurrence)
@@ -221,8 +263,6 @@ function validateJobInput(input) {
   const scheduledFor = new Date(input.scheduledFor);
   const expectedFingerprint = input.expectedFingerprint;
 
-  if (!sessionName) throw new HttpError(400, "缺少 Herdr session");
-  if (!/^w[^:]*:p.+$/i.test(paneId)) throw new HttpError(400, "Pane ID 格式不正確");
   if (!message) throw new HttpError(400, "請輸入要傳送的訊息");
   if (Number.isNaN(scheduledFor.getTime())) throw new HttpError(400, "排程時間格式不正確");
   if (scheduledFor.getTime() < Date.now() - 5_000) throw new HttpError(400, "排程時間已經過去");
@@ -847,8 +887,11 @@ export async function createApplication({
     }
   }
 
+  const extraHosts = String(process.env.ALLOWED_HOSTS || "").split(",");
   const server = createServer(async (request, response) => {
-    const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
+    const rejected = requestGuard(request, extraHosts);
+    if (rejected) return sendError(response, rejected.status, rejected.message);
+    const url = new URL(request.url, `http://${request.headers.host}`);
     try {
       if (url.pathname.startsWith("/api/")) {
         await apiHandler(request, response, url);
